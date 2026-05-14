@@ -1,0 +1,26 @@
+name: plow-chat-platform
+label: Plow Chat
+kind: platform
+version: 0.1.0
+description: >
+  Plow Chat gateway adapter for Hermes Agent. Creates a Hermes messaging
+  platform backed by the Plow Chat REST API and WebSocket stream.
+author: Plow / Hermes Agent seed
+requires_env:
+  - name: PLOW_CHAT_CHAT_UID
+    description: "Plow chat uid, e.g. cht_..."
+    prompt: "Plow chat uid"
+    password: false
+  - name: PLOW_CHAT_SECRET_KEY
+    description: "Per-chat secret key returned once by POST /v1/chats"
+    prompt: "Plow chat secret key"
+    password: true
+optional_env:
+  - name: PLOW_CHAT_BASE_URL
+    description: "API base URL (default: https://chat.plow.co)"
+    prompt: "Plow Chat base URL"
+    password: false
+  - name: PLOW_CHAT_HOME_CHANNEL
+    description: "Default delivery chat uid (defaults to PLOW_CHAT_CHAT_UID)"
+    prompt: "Home chat uid"
+    password: false
