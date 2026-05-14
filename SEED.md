@@ -23,7 +23,8 @@ Sub-folder SEEDs in this tree inherit the RFC 2119 declaration. They MUST NOT re
 
 - Hermes Agent MUST be installed with gateway/plugin support. The target Hermes tree SHOULD contain `gateway/platforms/base.py`, `gateway/platform_registry.py`, and `plugins/platforms/` support. ^dep-hermes
 - Python MUST have `aiohttp` available for the reference adapter's REST and WebSocket client. ^dep-aiohttp
-- The sample code in `ref/hermes-plugin/plow_chat/` MAY be copied into a Hermes plugin location such as `$HERMES_HOME/plugins/platforms/plow_chat/` or an equivalent plugin-discovery path for the installed Hermes version. ^dep-plugin-copy
+- A fresh Hermes SHOULD install this SEED directly as a Git plugin from the repository root: `hermes plugins install <git-url-or-file-url> --enable`. The root `plugin.yaml` and `__init__.py` load the reference adapter from `ref/hermes-plugin/plow_chat/`. ^dep-plugin-install
+- The sample code in `ref/hermes-plugin/plow_chat/` MAY also be copied into a Hermes plugin location such as `$HERMES_HOME/plugins/platforms/plow_chat/` or an equivalent plugin-discovery path for the installed Hermes version. ^dep-plugin-copy
 
 ## Objects
 
@@ -60,13 +61,17 @@ Sub-folder SEEDs in this tree inherit the RFC 2119 declaration. They MUST NOT re
 
 ### Reference plugin
 
-- The folder `ref/hermes-plugin/plow_chat/` contains sample Hermes plugin files for `plow_chat`. ^obj-ref-plugin
+- The repository root is an installable Hermes plugin because it contains `plugin.yaml` and `__init__.py`. ^obj-root-plugin
+- Root `__init__.py` loads and re-exports `register(ctx)` from `ref/hermes-plugin/plow_chat/adapter.py`, so `hermes plugins install <this repo> --enable` registers platform `plow_chat`. ^obj-root-entrypoint
+- The folder `ref/hermes-plugin/plow_chat/` contains the readable Hermes plugin files for `plow_chat`. ^obj-ref-plugin
 - The sample prioritizes the shape of the adapter contract over exhaustive production hardening.
 
 ### Reference helper scripts
 
 - `ref/scripts/create_chat.py` creates a Plow chat and prints the verification instructions while writing the per-chat secret to a local state file. ^obj-create-script
 - `ref/scripts/check_chat.py` reads a local state file and reports whether the chat is pending, active, or failed without printing the chat secret. ^obj-check-script
+- `ref/scripts/configure_hermes_env.py` writes `PLOW_CHAT_*` values from a local state file into Hermes' `.env` without printing the secret. ^obj-configure-env-script
+- `ref/scripts/bootstrap_fresh_hermes.sh` installs the SEED into Hermes, optionally creates a chat, and configures Hermes env from a verified state file. ^obj-bootstrap-script
 
 ## Actions
 
@@ -106,9 +111,11 @@ Sub-folder SEEDs in this tree inherit the RFC 2119 declaration. They MUST NOT re
 
 ### plow_chat is configured in Hermes
 
+- A fresh Hermes MAY install this SEED directly with `hermes plugins install <git-url-or-file-url> --enable`; plugin discovery MUST call root `register(ctx)` and register platform `plow_chat`. ^act-install-plugin
 - A Hermes install SHOULD configure the platform with these non-secret values in `config.yaml` or equivalent plugin config: `base_url`, `chat_uid`, and optionally `home_channel`. ^act-config
 - The chat secret MUST be configured through an environment variable such as `PLOW_CHAT_SECRET_KEY`, not committed config.
 - A reasonable env-only setup is: `PLOW_CHAT_BASE_URL=https://chat.plow.co`, `PLOW_CHAT_CHAT_UID=<cht_...>`, `PLOW_CHAT_SECRET_KEY=<sk_...>`, and `PLOW_CHAT_HOME_CHANNEL=<cht_...>`.
+- When `PLOW_CHAT_CHAT_UID` and `PLOW_CHAT_SECRET_KEY` are present, the plugin's `env_enablement_fn` SHOULD auto-enable `gateway.platforms.plow_chat` and set its home channel to the Plow chat uid. ^act-env-auto-enable
 
 ## Verify
 
@@ -118,15 +125,19 @@ Sub-folder SEEDs in this tree inherit the RFC 2119 declaration. They MUST NOT re
 
 3. **Hermes adapter-shape check.** Inspect `ref/hermes-plugin/plow_chat/adapter.py`. Does it define a `PlowChatAdapter` implementing `connect`, `disconnect`, and `send`, and a `register(ctx)` function that registers platform name `plow_chat`? Expected: yes. ^v-adapter-shape
 
-4. **Secret hygiene check.** Search committed files. Do they avoid literal `sk_` chat secrets and one-time verification codes? Expected: yes. ^v-secret-hygiene
+4. **Root plugin installability check.** Inspect repository root. Does it contain `plugin.yaml` with `kind: platform` and `__init__.py` exporting `register(ctx)`? Expected: yes. ^v-root-plugin
 
-5. **Optional live chat check.** If the installer has created a local state file containing a Plow chat uid and secret, run `ref/scripts/check_chat.py <state-file>`. Does it report `active` after the user texts the verification code, or `pending` before verification? Expected: active for a completed install. ^v-live-chat
+5. **Env writer check.** Run `python3 -m py_compile ref/scripts/configure_hermes_env.py` and test it against a dummy state file. Does it write `PLOW_CHAT_BASE_URL`, `PLOW_CHAT_CHAT_UID`, `PLOW_CHAT_SECRET_KEY`, and `PLOW_CHAT_HOME_CHANNEL` without printing the secret? Expected: yes. ^v-env-writer
+
+6. **Secret hygiene check.** Search committed files. Do they avoid literal `sk_` chat secrets and one-time verification codes? Expected: yes. ^v-secret-hygiene
+
+7. **Optional live chat check.** If the installer has created a local state file containing a Plow chat uid and secret, run `ref/scripts/check_chat.py <state-file>`. Does it report `active` after the user texts the verification code, or `pending` before verification? Expected: active for a completed install. ^v-live-chat
 
 ## Open
 
 - The sample plugin does not implement media attachments, streaming draft edits, delete-message, or native button UI for clarify prompts. ^o-media
 - The sample plugin does not yet include production-grade reconnect backfill cursor persistence; it documents the expected behavior and includes a simple reconnect loop. ^o-backfill
-- The exact copy/install path for user-provided platform plugins can vary across Hermes versions and profiles; this SEED describes both the object contract and a plugin-shaped reference implementation. ^o-install-path
+- User-installed Hermes platform plugins must be enabled (`hermes plugins install ... --enable` or `hermes plugins enable plow-chat-platform`) before gateway plugin discovery will load them. ^o-plugin-enable
 - The Plow Chat API is pre-1.0 and may change without backwards compatibility guarantees. ^o-api-stability
 
 ## Non-Goals
