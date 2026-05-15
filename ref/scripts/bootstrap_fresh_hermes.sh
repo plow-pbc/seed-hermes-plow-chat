@@ -5,19 +5,24 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 STATE_FILE="${PLOW_CHAT_STATE_FILE:-${HOME}/.hermes/plow_chat_state.json}"
 DISPLAY_NAME="${PLOW_CHAT_DISPLAY_NAME:-Hermes user}"
 LINE_ID="${PLOW_CHAT_LINE_ID:-}"
+PLOW_CHAT_SEED_DIR="${PLOW_CHAT_SEED_DIR:-${HOME}/.cache/seed-plow-chat}"
+PLOW_CHAT_SEED_URL="${PLOW_CHAT_SEED_URL:-https://github.com/plow-pbc/seed-plow-chat.git}"
 
 usage() {
   cat <<'EOF'
 Usage: ref/scripts/bootstrap_fresh_hermes.sh [--state PATH] [--line-id ln_...] [--display-name NAME] [--skip-create]
 
-Installs this SEED as a Hermes plugin from the repo root, creates a Plow chat
-unless --skip-create is supplied, writes the resulting state into Hermes' .env,
-and prints the gateway start command.
+Installs this SEED as a Hermes plugin from the repo root, ensures the
+seed-plow-chat dep is cloned, creates a Plow chat via that dep's
+ref/examples/create_chat.py (unless --skip-create), writes the resulting
+state into Hermes' .env, and prints the gateway start command.
 
 Environment overrides:
-  PLOW_CHAT_STATE_FILE
-  PLOW_CHAT_DISPLAY_NAME
-  PLOW_CHAT_LINE_ID
+  PLOW_CHAT_STATE_FILE   default ~/.hermes/plow_chat_state.json
+  PLOW_CHAT_DISPLAY_NAME default "Hermes user"
+  PLOW_CHAT_LINE_ID      default first available line from /v1/lines
+  PLOW_CHAT_SEED_DIR     default ~/.cache/seed-plow-chat
+  PLOW_CHAT_SEED_URL     default https://github.com/plow-pbc/seed-plow-chat.git
 EOF
 }
 
@@ -46,15 +51,22 @@ PY
 # plugin.yaml + __init__.py, a fresh Hermes can point directly at the SEED.
 hermes plugins install "file://${ROOT}" --force --enable
 
+# Ensure the seed-plow-chat dep is available; bootstrap clones it on demand so
+# this script also works when invoked outside a SEED-aware agent.
+if [[ ! -d "${PLOW_CHAT_SEED_DIR}/.git" ]]; then
+  mkdir -p "$(dirname "${PLOW_CHAT_SEED_DIR}")"
+  git clone --depth 1 "${PLOW_CHAT_SEED_URL}" "${PLOW_CHAT_SEED_DIR}"
+fi
+
 if [[ "$SKIP_CREATE" != "1" ]]; then
-  CREATE_ARGS=("${ROOT}/ref/scripts/create_chat.py" --display-name "$DISPLAY_NAME" --state "$STATE_FILE")
+  CREATE_ARGS=("${PLOW_CHAT_SEED_DIR}/ref/examples/create_chat.py" --display-name "$DISPLAY_NAME" --state "$STATE_FILE")
   if [[ -n "$LINE_ID" ]]; then
     CREATE_ARGS+=(--line-id "$LINE_ID")
   fi
   python3 "${CREATE_ARGS[@]}"
   echo
   echo "Text the VERIFY code above to the displayed Plow line, then run:"
-  echo "  python3 ${ROOT}/ref/scripts/check_chat.py ${STATE_FILE}"
+  echo "  python3 ${PLOW_CHAT_SEED_DIR}/ref/examples/check_chat.py ${STATE_FILE}"
   echo
   echo "After it reports status=active, run this bootstrap again with --skip-create:"
   echo "  ${ROOT}/ref/scripts/bootstrap_fresh_hermes.sh --state ${STATE_FILE} --skip-create"

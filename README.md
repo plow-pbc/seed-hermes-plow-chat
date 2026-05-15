@@ -1,28 +1,34 @@
-# Plow Chat Hermes Platform Adapter SEED
+# Hermes Plow Chat Platform Adapter SEED
 
 ## Purpose
 
-This SEED captures the capability of installing a Hermes Agent custom gateway platform named `plow_chat`. The platform uses the Plow Chat API to create and bind an inbound-first chat, send Hermes responses through `POST /v1/chats/{chat_uid}/messages`, and receive user replies through the Plow Chat WebSocket stream at `/v1/ws`.
+This SEED installs a Hermes Agent custom gateway platform named `plow_chat` that wires Hermes into the [Plow Chat](https://github.com/plow-pbc/seed-plow-chat) API — sending Hermes responses through `POST /v1/chats/{chat_uid}/messages` and receiving user replies over the Plow Chat WebSocket stream at `/v1/ws`.
 
 The repository root is also an installable Hermes plugin. A fresh Hermes can point directly at this SEED with `hermes plugins install <git-url-or-file-url> --enable`; the root `plugin.yaml` and `__init__.py` load the reference adapter from `ref/hermes-plugin/plow_chat/`.
+
+## Dependencies
+
+- [`seed-plow-chat`](https://github.com/plow-pbc/seed-plow-chat) — the API surface (endpoints, frame types, auth model) is defined there, not restated here. The bootstrap script clones it on demand to `~/.cache/seed-plow-chat/` and uses its example scripts for chat creation and status checks.
+- Hermes Agent with gateway/plugin support.
+- Python `aiohttp` available to Hermes' runtime.
 
 ## Quick start: fresh Hermes -> Plow Chat
 
 From a fresh Hermes install with this SEED checked out:
 
 ```bash
-cd seed-plow-chat
+cd seed-hermes-plow-chat
 ref/scripts/bootstrap_fresh_hermes.sh --line-id ln_YOUR_PLOW_LINE_ID
 ```
 
 Find an available `--line-id` with `curl -s https://chat.plow.co/v1/lines | jq '.data[].uid'` — pick the line you want Hermes to message users through.
 
-The script installs this repo as a Hermes plugin, creates a Plow chat, and prints a `VERIFY-XXXXXX` code plus the Plow line returned by the API. Text that code to the line from the phone/iMessage account that should talk to Hermes.
+The script installs this repo as a Hermes plugin, clones [`seed-plow-chat`](https://github.com/plow-pbc/seed-plow-chat) to `~/.cache/seed-plow-chat/` if it's not already there, creates a Plow chat, and prints a `VERIFY-XXXXXX` code plus the Plow line. Text that code to the line from the phone/iMessage account that should talk to Hermes.
 
 After verification:
 
 ```bash
-python3 ref/scripts/check_chat.py ~/.hermes/plow_chat_state.json
+python3 ~/.cache/seed-plow-chat/ref/examples/check_chat.py ~/.hermes/plow_chat_state.json
 ref/scripts/bootstrap_fresh_hermes.sh --skip-create
 hermes gateway restart
 ```
@@ -33,7 +39,8 @@ Manual install path:
 
 ```bash
 hermes plugins install "file://$(pwd)" --force --enable
-python3 ref/scripts/create_chat.py --state ~/.hermes/plow_chat_state.json
+git clone https://github.com/plow-pbc/seed-plow-chat.git ~/.cache/seed-plow-chat
+python3 ~/.cache/seed-plow-chat/ref/examples/create_chat.py --state ~/.hermes/plow_chat_state.json
 # text the VERIFY code, then:
 python3 ref/scripts/configure_hermes_env.py ~/.hermes/plow_chat_state.json
 hermes gateway restart
