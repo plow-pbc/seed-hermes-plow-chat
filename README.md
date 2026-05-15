@@ -12,8 +12,10 @@ From a fresh Hermes install with this SEED checked out:
 
 ```bash
 cd seed-plow-chat
-ref/scripts/bootstrap_fresh_hermes.sh --line-id ln_JakRCMmHRfQBAkG6f6X6FQ
+ref/scripts/bootstrap_fresh_hermes.sh --line-id ln_YOUR_PLOW_LINE_ID
 ```
+
+Find an available `--line-id` with `curl -s https://chat.plow.co/v1/lines | jq '.data[].uid'` — pick the line you want Hermes to message users through.
 
 The script installs this repo as a Hermes plugin, creates a Plow chat, and prints a `VERIFY-XXXXXX` code plus the Plow line returned by the API. Text that code to the line from the phone/iMessage account that should talk to Hermes.
 
