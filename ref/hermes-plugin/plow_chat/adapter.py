@@ -23,6 +23,7 @@ from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageTyp
 
 DEFAULT_BASE_URL = "https://chat.plow.co"
 MAX_MESSAGE_LENGTH = 4_000
+DEFAULT_WELCOME_MESSAGE = "Hi — Plow Chat is connected to Hermes now. Reply here to start chatting."
 
 
 def _truthy(value: str | None) -> bool:
@@ -57,6 +58,18 @@ def _flatten_message(content: str) -> str:
     return str(content or "").strip()
 
 
+def _welcome_message_from_env() -> str:
+    return os.getenv("PLOW_CHAT_WELCOME_MESSAGE", DEFAULT_WELCOME_MESSAGE).strip()
+
+
+def _auto_welcome_enabled() -> bool:
+    return str(os.getenv("PLOW_CHAT_AUTO_WELCOME", "true")).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _auto_approve_enabled() -> bool:
+    return str(os.getenv("PLOW_CHAT_AUTO_APPROVE_PAIRING", "true")).strip().lower() not in {"0", "false", "no", "off"}
+
+
 class PlowChatAdapter(BasePlatformAdapter):
     """Plow Chat <-> Hermes gateway adapter."""
 
@@ -71,6 +84,7 @@ class PlowChatAdapter(BasePlatformAdapter):
         self._ws_task: Optional[asyncio.Task] = None
         self._seen_message_uids: set[str] = set()
         self._stop_event = asyncio.Event()
+        self._welcome_sent = False
 
     @property
     def name(self) -> str:
@@ -200,6 +214,10 @@ class PlowChatAdapter(BasePlatformAdapter):
             return
         if frame_type == "chat_active":
             logger.info("[plow_chat] chat active")
+            await self._send_activation_welcome()
+            return
+        if frame_type == "participant_verified":
+            self._approve_sender_from_frame(frame)
             return
         if frame_type == "chat_activation_failed":
             reason = frame.get("reason", "activation_failed")
@@ -228,6 +246,8 @@ class PlowChatAdapter(BasePlatformAdapter):
         if not text.strip():
             return
 
+        self._approve_plow_member(user_id, user_name)
+
         source = self.build_source(
             chat_id=self.chat_uid,
             chat_name="Plow Chat",
@@ -243,6 +263,68 @@ class PlowChatAdapter(BasePlatformAdapter):
             message_id=msg_uid,
         )
         await self.handle_message(event)
+
+    async def _send_activation_welcome(self) -> None:
+        """Send one setup-success message after Plow reports activation.
+
+        The WebSocket can be connected while the chat is still pending. When
+        the user texts the verification code, Plow emits ``chat_active``; at
+        that point sends no longer return ``chat_not_ready`` and the user should
+        get an immediate confirmation instead of wondering whether setup
+        worked.
+        """
+        if self._welcome_sent or not _auto_welcome_enabled():
+            return
+        message = _welcome_message_from_env()
+        if not message:
+            return
+        result = await self.send(self.chat_uid, message)
+        if result.success:
+            self._welcome_sent = True
+        else:
+            logger.warning("[plow_chat] activation welcome send failed: %s", result.error)
+
+    def _approve_sender_from_frame(self, frame: dict[str, Any]) -> None:
+        """Best-effort approval from activation/verification frames."""
+        candidates = []
+        for key in ("participant", "member", "sender"):
+            value = frame.get(key)
+            if isinstance(value, dict):
+                candidates.append(value)
+        chat = frame.get("chat")
+        if isinstance(chat, dict):
+            participants = chat.get("participants") or []
+            candidates.extend(p for p in participants if isinstance(p, dict))
+        for item in candidates:
+            if item.get("type") in {None, "member"}:
+                user_id = item.get("uid") or item.get("provider_key")
+                if user_id:
+                    self._approve_plow_member(user_id, item.get("display_name") or user_id)
+
+    def _approve_plow_member(self, user_id: str, user_name: str = "") -> None:
+        """Best-effort DM pairing approval for the verified Plow member.
+
+        Plow already gates this chat by verification and per-chat secret. Hermes
+        pairing is an additional generic gateway layer; approving the member uid
+        here prevents the first real user message from being replaced by an
+        unrelated pairing-code prompt.
+        """
+        if not (_auto_approve_enabled() and user_id):
+            return
+        try:
+            from gateway.pairing import PairingStore
+        except Exception:
+            logger.debug("[plow_chat] PairingStore unavailable; skipping auto-approval", exc_info=True)
+            return
+        try:
+            store = PairingStore()
+            if hasattr(store, "approve_user"):
+                store.approve_user("plow_chat", user_id, user_name)
+                return
+            with store._lock:
+                store._approve_user("plow_chat", user_id, user_name)
+        except Exception:
+            logger.debug("[plow_chat] pairing auto-approval failed", exc_info=True)
 
 
 def check_requirements() -> bool:

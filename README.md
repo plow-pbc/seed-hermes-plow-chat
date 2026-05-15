@@ -23,17 +23,15 @@ ref/scripts/bootstrap_fresh_hermes.sh --line-id ln_YOUR_PLOW_LINE_ID
 
 Find an available `--line-id` with `curl -s https://chat.plow.co/v1/lines | jq '.data[].uid'` — pick the line you want Hermes to message users through.
 
-The script installs this repo as a Hermes plugin, clones [`seed-plow-chat`](https://github.com/plow-pbc/seed-plow-chat) to `~/.cache/seed-plow-chat/` if it's not already there, creates a Plow chat, and prints a `VERIFY-XXXXXX` code plus the Plow line. Text that code to the line from the phone/iMessage account that should talk to Hermes.
+The script installs this repo as a Hermes plugin, clones [`seed-plow-chat`](https://github.com/plow-pbc/seed-plow-chat) to `~/.cache/seed-plow-chat/` if it's not already there, creates a Plow chat, writes the Hermes env vars, and prints a `VERIFY-XXXXXX` code plus the Plow line. Text that code to the line from the phone/iMessage account that should talk to Hermes.
 
-After verification:
+Then start or restart the gateway immediately, even before verification:
 
 ```bash
-python3 ~/.cache/seed-plow-chat/ref/examples/check_chat.py ~/.hermes/plow_chat_state.json
-ref/scripts/bootstrap_fresh_hermes.sh --skip-create
 hermes gateway restart
 ```
 
-Then send a normal message in the verified Plow Chat thread. Hermes should receive it through the `plow_chat` gateway adapter and reply through the same thread.
+The adapter can connect to Plow's WebSocket while the chat is still pending. When the user texts the verification code, Plow emits `chat_active`; Hermes sends a welcome message automatically and auto-approves the verified Plow member in Hermes' DM pairing store. The user's first normal reply should go straight to Hermes instead of receiving a generic pairing-code prompt.
 
 Manual install path:
 
@@ -41,15 +39,17 @@ Manual install path:
 hermes plugins install "file://$(pwd)" --force --enable
 git clone https://github.com/plow-pbc/seed-plow-chat.git ~/.cache/seed-plow-chat
 python3 ~/.cache/seed-plow-chat/ref/examples/create_chat.py --state ~/.hermes/plow_chat_state.json
-# text the VERIFY code, then:
 python3 ref/scripts/configure_hermes_env.py ~/.hermes/plow_chat_state.json
 hermes gateway restart
+# text the VERIFY code; Hermes will send the welcome message on chat_active
 ```
 
 ## Important behavior
 
 - The chat secret is written only to the local state file and Hermes `.env`; it is not printed by the setup helper.
 - The adapter is one-chat-per-plugin-instance: `PLOW_CHAT_CHAT_UID` is the Hermes chat id and home channel.
+- The adapter subscribes to the WebSocket before activation, sends one welcome message on `chat_active`, and can be customized with `PLOW_CHAT_WELCOME_MESSAGE` or disabled with `PLOW_CHAT_AUTO_WELCOME=false`.
+- The adapter best-effort approves verified Plow member ids in Hermes' `plow_chat` pairing store so the first inbound message does not trigger a second pairing flow. Disable with `PLOW_CHAT_AUTO_APPROVE_PAIRING=false`.
 - Inbound WebSocket frames with `direction=outbound` are ignored so Hermes does not answer itself.
 - Rich Markdown is flattened to plain text because the backing channel is iMessage/SMS-style.
 

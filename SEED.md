@@ -56,13 +56,15 @@ The verbs performed by the Hermes-side objects. For Plow Chat actions (chat is c
 
 ### plow_chat receives a user message
 
-- The platform adapter implements the [[https://github.com/plow-pbc/seed-plow-chat/blob/main/SEED.md#Actions]] "WebSocket subscription is opened" and "Message is received" actions. ^act-receive
+- The adapter implements the [[https://github.com/plow-pbc/seed-plow-chat/blob/main/SEED.md#Actions]] "WebSocket subscription is opened" and "Message is received" actions. ^act-receive
 - For inbound frames, the adapter constructs a Hermes `MessageEvent` with the message body, Plow message uid, chat uid, and member sender uid/name.
+- Before dispatching an inbound member message into Hermes, the adapter SHOULD best-effort approve that member uid in Hermes' `plow_chat` pairing store so the verified Plow participant does not hit a second generic DM pairing flow. ^act-auto-pair
 - On disconnect, the adapter SHOULD reconnect by minting a fresh ticket and SHOULD backfill missed messages with `GET /v1/chats/{chat_uid}/messages`.
 
 ### plow_chat handles status and activation frames
 
 - The adapter MAY log `message_status_updated` frames for outbound delivery transitions. ^act-status
+- The adapter SHOULD subscribe while the Plow chat is still pending and, on `chat_active`, send exactly one setup-success welcome message through the normal Plow message endpoint. ^act-activation-welcome
 - The adapter SHOULD surface `chat_activation_failed` as a fatal setup error, because recovery is delete and recreate.
 - The adapter SHOULD mark the platform connected only after the WebSocket's initial `connected` frame.
 
