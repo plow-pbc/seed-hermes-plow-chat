@@ -65,18 +65,18 @@ if [[ "$SKIP_CREATE" != "1" ]]; then
   fi
   python3 "${CREATE_ARGS[@]}"
   echo
-  echo "Text the VERIFY code above to the displayed Plow line, then run:"
-  echo "  python3 ${PLOW_CHAT_SEED_DIR}/ref/examples/check_chat.py ${STATE_FILE}"
-  echo
-  echo "After it reports status=active, run this bootstrap again with --skip-create:"
-  echo "  ${ROOT}/ref/scripts/bootstrap_fresh_hermes.sh --state ${STATE_FILE} --skip-create"
-  exit 0
+  echo "Text the VERIFY code above to the displayed Plow line."
+  echo "This script will configure Hermes now; the gateway can connect while the chat is pending."
+  echo "When Plow emits chat_active after verification, Hermes will send the welcome message automatically."
 fi
 
 python3 "${ROOT}/ref/scripts/configure_hermes_env.py" "$STATE_FILE"
 
 echo
-echo "Plow Chat plugin is installed and env is configured. Start or restart the gateway:"
+echo "Plow Chat plugin is installed and env is configured. Start or restart the gateway now:"
 echo "  hermes gateway restart"
 echo "or foreground for logs:"
 echo "  hermes gateway run"
+echo
+echo "If you want to inspect activation manually:"
+echo "  python3 ${PLOW_CHAT_SEED_DIR}/ref/examples/check_chat.py ${STATE_FILE}"

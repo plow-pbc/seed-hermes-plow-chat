@@ -28,3 +28,18 @@ optional_env:
     prompt: "Home chat uid"
     secret: false
     password: false
+  - name: PLOW_CHAT_WELCOME_MESSAGE
+    description: "Optional setup-success message sent once when Plow emits chat_active"
+    prompt: "Welcome message"
+    secret: false
+    password: false
+  - name: PLOW_CHAT_AUTO_WELCOME
+    description: "Set false to disable the automatic chat_active welcome message"
+    prompt: "Auto welcome enabled"
+    secret: false
+    password: false
+  - name: PLOW_CHAT_AUTO_APPROVE_PAIRING
+    description: "Set false to disable best-effort approval of verified Plow members in Hermes pairing"
+    prompt: "Auto approve pairing enabled"
+    secret: false
+    password: false
