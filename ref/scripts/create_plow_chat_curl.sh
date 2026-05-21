@@ -3,7 +3,7 @@ set -euo pipefail
 
 BASE_URL="${PLOW_CHAT_BASE_URL:-https://chat.plow.co}"
 DATA_DIR="${HERMES_DATA_DIR:-./data}"
-LINE_ID="${PLOW_CHAT_LINE_ID:-}"
+LINE_ID="${PLOW_CHAT_LINE:-${PLOW_CHAT_LINE_ID:-}}"
 DISPLAY_NAME="${PLOW_CHAT_DISPLAY_NAME:-Hermes user}"
 TIMEOUT_SECONDS="${PLOW_CHAT_VERIFY_TIMEOUT:-900}"
 POLL_INTERVAL="${PLOW_CHAT_VERIFY_POLL_INTERVAL:-5}"
@@ -20,7 +20,8 @@ the chat becomes active or the timeout expires.
 Options:
   --data-dir PATH        Hermes data directory, default ./data
   --base-url URL         Plow Chat base URL, default https://chat.plow.co
-  --line-id ln_...      Plow line uid; default first line from /v1/lines
+  --line ln_...         Optional line uid override; default auto-discovers from /v1/lines
+  --line-id ln_...      Alias for --line
   --display-name NAME   Member display name, default "Hermes user"
   --timeout SECONDS     Poll timeout, default 900
   --interval SECONDS    Poll interval, default 5
@@ -29,6 +30,7 @@ Options:
 Environment overrides:
   HERMES_DATA_DIR
   PLOW_CHAT_BASE_URL
+  PLOW_CHAT_LINE         Optional line uid override
   PLOW_CHAT_LINE_ID
   PLOW_CHAT_DISPLAY_NAME
   PLOW_CHAT_VERIFY_TIMEOUT
@@ -40,7 +42,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --data-dir) DATA_DIR="$2"; shift 2 ;;
     --base-url) BASE_URL="$2"; shift 2 ;;
-    --line-id) LINE_ID="$2"; shift 2 ;;
+    --line|--line-id) LINE_ID="$2"; shift 2 ;;
     --display-name) DISPLAY_NAME="$2"; shift 2 ;;
     --timeout) TIMEOUT_SECONDS="$2"; shift 2 ;;
     --interval) POLL_INTERVAL="$2"; shift 2 ;;
@@ -214,11 +216,10 @@ echo
 echo "Plow Chat created."
 echo "Chat uid: ${CHAT_UID}"
 echo "Wrote PLOW_CHAT_* to ${ENV_FILE}"
-echo "Text this code from iMessage: ${VERIFY_CODE}"
 if [[ -n "$LINE_PROVIDER_KEY" ]]; then
-  echo "To this Plow line: ${LINE_PROVIDER_KEY}"
+  echo "Text ${VERIFY_CODE} from iMessage to ${LINE_PROVIDER_KEY}"
 else
-  echo "To the Plow line with uid: ${LINE_ID}"
+  echo "Text ${VERIFY_CODE} from iMessage to the Plow line with uid ${LINE_ID}"
 fi
 if [[ -n "$VERIFY_EXPIRES_AT" ]]; then
   echo "Code expires at: ${VERIFY_EXPIRES_AT}"

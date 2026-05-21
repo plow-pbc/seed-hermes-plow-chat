@@ -44,7 +44,7 @@ if [[ -e after-install.md || -e ref/scripts/bootstrap_fresh_hermes.sh || -e ref/
   echo 'old host installer artifact still exists' >&2
   exit 1
 fi
-if grep -rnE 'python3|git clone|hermes plugins|hermes gateway|GH_TOKEN' ref/scripts; then
+if grep -rnE 'python3|git clone|hermes plugins|hermes gateway|GH[_]TOKEN' ref/scripts; then
   echo 'host scripts still reference Python/git/Hermes installer artifacts' >&2
   exit 1
 fi
@@ -87,7 +87,6 @@ PATH="$mockdir/bin:/usr/bin:/bin" PLOW_FAKE_COUNT_FILE="$mockdir/count" \
   ref/scripts/create_plow_chat_curl.sh \
     --data-dir "$mockdir/data" \
     --base-url https://chat.plow.test \
-    --line-id ln_test \
     --interval 0 \
     --timeout 3 >"$mockdir/out.txt"
 grep -q 'Verified: chat is active.' "$mockdir/out.txt" || {
@@ -100,6 +99,14 @@ grep -q 'PLOW_CHAT_CHAT_UID=cht_test' "$mockdir/data/.env" || {
 }
 grep -q '"member_uid": "mem_test"' "$mockdir/data/plow_chat_state.json" || {
   echo 'jq-less curl orchestration wrote wrong member uid' >&2
+  exit 1
+}
+grep -q '"line_uid": "ln_other"' "$mockdir/data/plow_chat_state.json" || {
+  echo 'jq-less curl orchestration did not auto-select the first discovered line' >&2
+  exit 1
+}
+grep -q 'Text VERIFY-XXXXXX from iMessage to +10000000000' "$mockdir/out.txt" || {
+  echo 'jq-less curl orchestration did not surface the selected line phone number' >&2
   exit 1
 }
 if grep -q 'Code expires at:' "$mockdir/out.txt"; then

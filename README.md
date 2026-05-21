@@ -65,15 +65,18 @@ code, write `PLOW_CHAT_*` to `./data/.env`, and poll status:
 
 ```bash
 ref/scripts/create_plow_chat_curl.sh \
-  --data-dir ./data \
-  --line-id ln_YOUR_DEMO_LINE
+  --data-dir ./data
 ```
 
-If `--line-id` is omitted, the script uses the first line returned by
-`GET /v1/lines`. The script prints the `VERIFY-XXXXXX` code and Plow line
-number, but it does not print the chat secret. Start Hermes with
-`docker compose up` before texting the code so the plugin is subscribed when
-Plow emits `chat_active`.
+The script auto-discovers an available line with unauthenticated
+`GET /v1/lines`, uses the first returned line by default, and prints the
+instruction the user needs: `Text VERIFY-XXXXXX from iMessage to +1...`. It
+does not print the chat secret. Start Hermes with `docker compose up` before
+texting the code so the plugin is subscribed when Plow emits `chat_active`.
+
+For controlled demos, pin a specific line with `--line ln_...` or
+`PLOW_CHAT_LINE=ln_...` to avoid shared-line collisions. This override is
+optional; normal users should not supply or know a line uid.
 
 The host poll uses:
 

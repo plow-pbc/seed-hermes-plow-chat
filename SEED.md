@@ -20,7 +20,7 @@ Sub-folder SEEDs in this tree inherit the RFC 2119 declaration. They MUST NOT re
 
 - Hermes Agent MUST run in the Docker-backed `seed-hermes` shape: a host `compose.yaml`, whole `./data:/opt/data` mount, and `HERMES_HOME=/opt/data` inside the container. ^dep-hermes-docker
 - Hermes' container runtime MUST have gateway/plugin support and Python `aiohttp`; the official Hermes image supplies the runtime dependencies for this plugin. ^dep-container-runtime
-- The host setup path MUST NOT require host `hermes`, host Python, git, `hermes plugins install`, `GH_TOKEN`, or container-side network/plugin installation. ^dep-host-minimal
+- The host setup path MUST NOT require host `hermes`, host Python, git, `hermes plugins install`, host GitHub token environment variables, or container-side network/plugin installation. ^dep-host-minimal
 - The host setup path MAY use `curl` and standard shell tools. `gh` MAY be used by a higher-level seed as an accelerator, but it is not required by this SEED. ^dep-curl
 
 ## Objects
@@ -64,7 +64,7 @@ The verbs performed by the Hermes-side objects. For Plow Chat actions (chat is c
 
 ### Host creates and polls Plow chat with curl
 
-- The host flow MUST create a chat with unauthenticated `POST /v1/chats`, capture the response `uid`, one-time `secret_key`, and member `verification_code`, and surface the verification code plus line `provider_key` to the human. ^act-curl-create
+- The host flow MUST auto-discover an available line with unauthenticated `GET /v1/lines`, create a chat with unauthenticated `POST /v1/chats`, capture the response `uid`, one-time `secret_key`, and member `verification_code`, and surface the verification code plus line `provider_key` to the human. It MAY accept an optional line override for controlled demos. ^act-curl-create
 - The host flow MUST poll `GET /v1/chats/{chat_uid}` with `X-Chat-Secret-Key: <secret>` until the chat status is `active`, `failed`, or a local timeout expires. ^act-curl-poll
 - The timeout path MUST tell the operator that the verification may not have arrived, Hermes may not have been running to send the welcome, or the code may have expired; recovery is to recreate the chat. ^act-timeout
 
@@ -102,7 +102,7 @@ The verbs performed by the Hermes-side objects. For Plow Chat actions (chat is c
 
 6. **Container plugin-load check.** Prepare `./data` with the direct file set, `plugins.enabled: [plow-chat-platform]`, and dummy or real `PLOW_CHAT_*`; run `docker compose up`. Do logs show platform `plow_chat` registered and no `ImportError` from the plugin root? Expected: yes. ^v-container-load
 
-7. **Optional live chat check.** With a real Plow line, run `ref/scripts/create_plow_chat_curl.sh --data-dir ./data --line-id <line>`, start Hermes, text the printed verification code from iMessage, and let the script poll. Does it report `active`, and does Hermes send one welcome message on `chat_active`? Expected: yes. ^v-live-chat
+7. **Optional live chat check.** Run `ref/scripts/create_plow_chat_curl.sh --data-dir ./data`, start Hermes, text the printed verification code from iMessage to the printed phone number, and let the script poll. Does it report `active`, and does Hermes send one welcome message on `chat_active`? Expected: yes. For demo hygiene, pin a specific line with `--line <line>` or `PLOW_CHAT_LINE=<line>`. ^v-live-chat
 
 ## Open
 

@@ -42,8 +42,11 @@ request may fail later because the chat credentials are not real.
 ```bash
 mkdir -p data
 ref/scripts/install_direct_mount.sh --data-dir ./data --source-dir .
-ref/scripts/create_plow_chat_curl.sh --data-dir ./data --line-id ln_YOUR_DEMO_LINE
+ref/scripts/create_plow_chat_curl.sh --data-dir ./data
 ```
+
+The script auto-discovers a line. For demo hygiene, pin one with
+`--line ln_YOUR_DEMO_LINE` or `PLOW_CHAT_LINE=ln_YOUR_DEMO_LINE`.
 
 In a second terminal, start Hermes before texting the code:
 
