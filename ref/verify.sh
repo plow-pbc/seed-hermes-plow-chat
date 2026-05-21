@@ -23,21 +23,22 @@ PY
 # 2. Direct-mount file-set + config enablement check.
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
-ref/scripts/install_direct_mount.sh --data-dir "$tmpdir/data" --source-dir . >/tmp/seed-hermes-plow-chat-install.out
+mkdir -p "$tmpdir/hermes-agent"
+PLOW_CHAT_PLUGIN_LOCAL_DIR=. ref/scripts/install_direct_mount.sh --scaffold "$tmpdir/hermes-agent" >/tmp/seed-hermes-plow-chat-install.out
 
 for path in \
-  "$tmpdir/data/plugins/plow-chat-platform/plugin.yaml" \
-  "$tmpdir/data/plugins/plow-chat-platform/__init__.py" \
-  "$tmpdir/data/plugins/plow-chat-platform/ref/hermes-plugin/plow_chat/adapter.py"
+  "$tmpdir/hermes-agent/data/plugins/plow-chat-platform/plugin.yaml" \
+  "$tmpdir/hermes-agent/data/plugins/plow-chat-platform/__init__.py" \
+  "$tmpdir/hermes-agent/data/plugins/plow-chat-platform/ref/hermes-plugin/plow_chat/adapter.py"
 do
   [[ -f "$path" ]] || { echo "missing direct-mounted file: $path" >&2; exit 1; }
 done
 
-grep -q 'plow-chat-platform' "$tmpdir/data/config.yaml" || {
+grep -q 'plow-chat-platform' "$tmpdir/hermes-agent/data/config.yaml" || {
   echo 'config.yaml does not enable plow-chat-platform' >&2
   exit 1
 }
-cat >"$tmpdir/data/config.yaml" <<'YAML'
+cat >"$tmpdir/hermes-agent/data/config.yaml" <<'YAML'
 plugins:
   enabled: [other-plugin]
   disabled:
@@ -46,12 +47,12 @@ plugins:
 terminal:
   cwd: /opt/data/workspace
 YAML
-ref/scripts/install_direct_mount.sh --data-dir "$tmpdir/data" --source-dir . >/tmp/seed-hermes-plow-chat-install-existing.out
-grep -q 'enabled: \[other-plugin, plow-chat-platform\]' "$tmpdir/data/config.yaml" || {
+PLOW_CHAT_PLUGIN_LOCAL_DIR=. ref/scripts/install_direct_mount.sh --scaffold "$tmpdir/hermes-agent" >/tmp/seed-hermes-plow-chat-install-existing.out
+grep -q 'enabled: \[other-plugin, plow-chat-platform\]' "$tmpdir/hermes-agent/data/config.yaml" || {
   echo 'config.yaml inline enabled list was not preserved and extended' >&2
   exit 1
 }
-if awk '/disabled:/{in_disabled=1; next} in_disabled && /^  [^ ]/{in_disabled=0} in_disabled && /plow-chat-platform/{found=1} END{exit found ? 0 : 1}' "$tmpdir/data/config.yaml"; then
+if awk '/disabled:/{in_disabled=1; next} in_disabled && /^  [^ ]/{in_disabled=0} in_disabled && /plow-chat-platform/{found=1} END{exit found ? 0 : 1}' "$tmpdir/hermes-agent/data/config.yaml"; then
   echo 'config.yaml still disables plow-chat-platform after install' >&2
   exit 1
 fi
@@ -62,7 +63,7 @@ if [[ -e after-install.md || -e ref/scripts/bootstrap_fresh_hermes.sh || -e ref/
   echo 'old host installer artifact still exists' >&2
   exit 1
 fi
-if grep -rnE 'python3|git clone|hermes plugins|hermes gateway|GH[_]TOKEN' ref/scripts; then
+if grep -rnE 'python3|git clone|hermes plugins|hermes gateway|GH[_]TOKEN|PLOW_CHAT_LINE_ID|--line-id' ref/scripts; then
   echo 'host scripts still reference Python/git/Hermes installer artifacts' >&2
   exit 1
 fi
@@ -70,8 +71,8 @@ fi
 # 4. jq-less curl orchestration check. The host path guarantees curl, not jq;
 # keep jq out of PATH and verify optional missing fields do not abort parsing.
 mockdir="$(mktemp -d)"
-mkdir -p "$mockdir/bin" "$mockdir/data"
-for cmd in bash tr grep head sed mktemp mkdir awk mv chmod date sleep dirname cat; do
+mkdir -p "$mockdir/bin" "$mockdir/hermes-agent"
+for cmd in bash tr grep head sed mktemp mkdir awk mv chmod date sleep dirname cat cp; do
   target="$(command -v "$cmd")"
   ln -s "$target" "$mockdir/bin/$cmd"
 done
@@ -107,7 +108,7 @@ SH
 chmod +x "$mockdir/bin/curl"
 PATH="$mockdir/bin" PLOW_FAKE_COUNT_FILE="$mockdir/count" \
   bash ref/scripts/create_plow_chat_curl.sh \
-    --data-dir "$mockdir/data" \
+    --scaffold "$mockdir/hermes-agent" \
     --base-url https://chat.plow.test \
     --interval 0 \
     --timeout 3 >"$mockdir/out.txt"
@@ -115,7 +116,7 @@ grep -q 'Verified: chat is active.' "$mockdir/out.txt" || {
   echo 'jq-less curl orchestration did not poll to active' >&2
   exit 1
 }
-grep -q 'PLOW_CHAT_CHAT_UID=cht_test' "$mockdir/data/.env" || {
+grep -q 'PLOW_CHAT_CHAT_UID=cht_test' "$mockdir/hermes-agent/data/.env" || {
   echo 'jq-less curl orchestration wrote wrong chat uid' >&2
   exit 1
 }
@@ -123,7 +124,7 @@ grep -q 'Text VERIFY-XXXXXX from iMessage to +10000000000' "$mockdir/out.txt" ||
   echo 'jq-less curl orchestration did not surface the selected line phone number' >&2
   exit 1
 }
-if [[ -e "$mockdir/data/plow_chat_state.json" ]]; then
+if [[ -e "$mockdir/hermes-agent/data/plow_chat_state.json" ]]; then
   echo 'curl orchestration wrote secret-bearing sidecar state' >&2
   exit 1
 fi

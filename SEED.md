@@ -36,15 +36,15 @@ The named entities that exist on the Hermes side. For Plow Chat entities (chats,
 
 ### Direct-mounted plugin
 
-- The plugin MUST be placed on the host at `./data/plugins/plow-chat-platform/`, which the Hermes container sees as `/opt/data/plugins/plow-chat-platform/`. ^obj-direct-plugin
+- The plugin MUST be placed on the host at `<seed-hermes-scaffold>/data/plugins/plow-chat-platform/`, which the Hermes container sees as `/opt/data/plugins/plow-chat-platform/`. ^obj-direct-plugin
 - The mounted plugin directory MUST include `plugin.yaml`, `__init__.py`, and `ref/hermes-plugin/plow_chat/adapter.py`, preserving that layout. ^obj-required-files
 - The root `__init__.py` MUST load and re-export `register(ctx)` from `ref/hermes-plugin/plow_chat/adapter.py`; if that adapter file is missing, it MUST raise `ImportError` at boot. ^obj-root-entrypoint
 - Hermes config MUST enable the manifest name `plow-chat-platform` in `plugins.enabled`; the registered platform name remains `plow_chat`. ^obj-plugin-enable
 
 ### Host orchestration scripts
 
-- `ref/scripts/install_direct_mount.sh` is a curl/shell helper that places the required plugin file set under `./data/plugins/plow-chat-platform/` and enables `plow-chat-platform` in `./data/config.yaml`. ^obj-direct-install-script
-- `ref/scripts/create_plow_chat_curl.sh` is a curl/shell helper that creates a Plow chat, prints the one-time verification code, writes `PLOW_CHAT_*` to `./data/.env`, and polls `GET /v1/chats/{chat_uid}` until `active` or timeout. ^obj-curl-chat-script
+- `ref/scripts/install_direct_mount.sh` is the canonical curl/shell installer for this gateway. It targets a seed-hermes scaffold with `--scaffold <dir>` (default `./hermes-agent`) or an explicit `--data-dir <dir>`, places the required plugin file set under `data/plugins/plow-chat-platform/`, enables `plow-chat-platform` in `data/config.yaml`, and supports `PLOW_CHAT_PLUGIN_LOCAL_DIR` and `PLOW_CHAT_PLUGIN_REF` source overrides. ^obj-direct-install-script
+- `ref/scripts/create_plow_chat_curl.sh` is a curl/shell helper that targets the same scaffold with `--scaffold <dir>` or `--data-dir <dir>`, creates a Plow chat, prints the one-time verification code, writes `PLOW_CHAT_*` to `data/.env`, and polls `GET /v1/chats/{chat_uid}` until `active` or timeout. ^obj-curl-chat-script
 
 ## Actions
 
@@ -52,13 +52,14 @@ The verbs performed by the Hermes-side objects. For Plow Chat actions (chat is c
 
 ### plow_chat is installed by direct mount
 
-- A host agent MUST place the plugin files directly into `./data/plugins/plow-chat-platform/`; it MUST NOT call `hermes plugins install`, `hermes plugins enable`, `git clone`, or any Python installer on the host. ^act-direct-mount
-- A host agent MUST ensure `./data/config.yaml` exists before first `docker compose up` and contains `plugins.enabled` with `plow-chat-platform`. ^act-enable-config
+- A host agent MUST run `ref/scripts/install_direct_mount.sh --scaffold <seed-hermes-scaffold>` to place the plugin files directly into `data/plugins/plow-chat-platform/`; it MUST NOT call `hermes plugins install`, `hermes plugins enable`, `git clone`, or any Python installer on the host. ^act-direct-mount
+- A host agent MUST ensure `<seed-hermes-scaffold>/data/config.yaml` exists before first `docker compose up` and contains `plugins.enabled` with `plow-chat-platform`. ^act-enable-config
 - A host agent SHOULD preserve any existing `config.yaml` values while adding this plugin. If no config exists, it MAY write the minimal plugin/terminal skeleton shown in the README. ^act-config-preserve
+- A host agent MAY set `PLOW_CHAT_PLUGIN_LOCAL_DIR` to copy plugin files from a local checkout, or `PLOW_CHAT_PLUGIN_REF` to fetch a specific branch/SHA from GitHub raw URLs. ^act-source-overrides
 
 ### plow_chat is configured with Plow chat credentials
 
-- A host agent MUST create the Plow chat before first Hermes boot for this gateway and write these values into `./data/.env`: `PLOW_CHAT_BASE_URL`, `PLOW_CHAT_CHAT_UID`, `PLOW_CHAT_SECRET_KEY`, and `PLOW_CHAT_HOME_CHANNEL`. ^act-write-env
+- A host agent MUST run `ref/scripts/create_plow_chat_curl.sh --scaffold <seed-hermes-scaffold>` before first Hermes boot for this gateway and write these values into `data/.env`: `PLOW_CHAT_BASE_URL`, `PLOW_CHAT_CHAT_UID`, `PLOW_CHAT_SECRET_KEY`, and `PLOW_CHAT_HOME_CHANNEL`. ^act-write-env
 - The chat secret MUST be configured through `PLOW_CHAT_SECRET_KEY`; it MUST NOT be committed, printed in logs, or placed in `config.yaml`. ^act-secret-env
 - When `PLOW_CHAT_CHAT_UID` and `PLOW_CHAT_SECRET_KEY` are present, the plugin's `env_enablement_fn` SHOULD auto-enable `gateway.platforms.plow_chat` and set its home channel to the Plow chat uid. ^act-env-auto-enable
 
@@ -90,7 +91,7 @@ The verbs performed by the Hermes-side objects. For Plow Chat actions (chat is c
 
 ## Verify
 
-1. **Direct file-set check.** Run `ref/scripts/install_direct_mount.sh --data-dir "$(mktemp -d)/data" --source-dir .`. Does it create `plugins/plow-chat-platform/plugin.yaml`, `plugins/plow-chat-platform/__init__.py`, and `plugins/plow-chat-platform/ref/hermes-plugin/plow_chat/adapter.py`? Expected: yes. ^v-direct-files
+1. **Direct file-set check.** Run `PLOW_CHAT_PLUGIN_LOCAL_DIR=. ref/scripts/install_direct_mount.sh --scaffold "$(mktemp -d)/hermes-agent"`. Does it create `data/plugins/plow-chat-platform/plugin.yaml`, `data/plugins/plow-chat-platform/__init__.py`, and `data/plugins/plow-chat-platform/ref/hermes-plugin/plow_chat/adapter.py`? Expected: yes. ^v-direct-files
 
 2. **Config enablement check.** Inspect the generated `config.yaml`. Does `plugins.enabled` include `plow-chat-platform` before first boot? Expected: yes. ^v-config-enabled
 
@@ -102,7 +103,7 @@ The verbs performed by the Hermes-side objects. For Plow Chat actions (chat is c
 
 6. **Container plugin-load check.** Prepare `./data` with the direct file set, `plugins.enabled: [plow-chat-platform]`, and dummy or real `PLOW_CHAT_*`; run `docker compose up`. Do logs show platform `plow_chat` registered and no `ImportError` from the plugin root? Expected: yes. ^v-container-load
 
-7. **Optional live chat check.** Run `ref/scripts/create_plow_chat_curl.sh --data-dir ./data`, start Hermes, text the printed verification code from iMessage to the printed phone number, and let the script poll. Does it report `active`, and does Hermes send one welcome message on `chat_active`? Expected: yes. For demo hygiene, pin a specific line with `--line <line>` or `PLOW_CHAT_LINE=<line>`. ^v-live-chat
+7. **Optional live chat check.** Run `ref/scripts/create_plow_chat_curl.sh --scaffold ./hermes-agent`, start Hermes, text the printed verification code from iMessage to the printed phone number, and let the script poll. Does it report `active`, and does Hermes send one welcome message on `chat_active`? Expected: yes. For demo hygiene, pin a specific line with `--line <line>` or `PLOW_CHAT_LINE=<line>`. ^v-live-chat
 
 ## Open
 

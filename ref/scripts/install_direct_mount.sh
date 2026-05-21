@@ -1,40 +1,54 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DATA_DIR="${HERMES_DATA_DIR:-./data}"
+SCAFFOLD_DIR="${HERMES_SCAFFOLD_DIR:-./hermes-agent}"
+DATA_DIR="${HERMES_DATA_DIR:-}"
 PLUGIN_NAME="plow-chat-platform"
 PLUGIN_DIR=""
-SOURCE_DIR=""
-RAW_BASE="${PLOW_CHAT_SEED_RAW_BASE:-https://raw.githubusercontent.com/plow-pbc/seed-hermes-plow-chat/main}"
+SOURCE_DIR="${PLOW_CHAT_PLUGIN_LOCAL_DIR:-}"
+PLUGIN_REF="${PLOW_CHAT_PLUGIN_REF:-main}"
+RAW_BASE="${PLOW_CHAT_SEED_RAW_BASE:-https://raw.githubusercontent.com/plow-pbc/seed-hermes-plow-chat/${PLUGIN_REF}}"
+SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 usage() {
   cat <<'EOF'
-Usage: ref/scripts/install_direct_mount.sh [--data-dir ./data] [--source-dir PATH]
+Usage: ref/scripts/install_direct_mount.sh [--scaffold ./hermes-agent] [--data-dir ./hermes-agent/data]
 
 Places the Plow Chat Hermes plugin directly into:
 
-  <data-dir>/plugins/plow-chat-platform/
+  <scaffold>/data/plugins/plow-chat-platform/
 
-and ensures <data-dir>/config.yaml enables the manifest name
+and ensures <scaffold>/data/config.yaml enables the manifest name
 plow-chat-platform. This helper does not call `hermes`, `git`, or the Hermes
-plugin installer. It uses local source files when --source-dir is supplied,
-otherwise it downloads the required file set with curl.
+plugin installer. It uses PLOW_CHAT_PLUGIN_LOCAL_DIR when supplied, otherwise it
+downloads the required file set from PLOW_CHAT_PLUGIN_REF.
 
 Environment overrides:
-  HERMES_DATA_DIR              default ./data
-  PLOW_CHAT_SEED_RAW_BASE      default raw GitHub main URL
+  HERMES_SCAFFOLD_DIR          default ./hermes-agent
+  HERMES_DATA_DIR              explicit data dir override
+  PLOW_CHAT_PLUGIN_LOCAL_DIR   copy plugin files from a local checkout
+  PLOW_CHAT_PLUGIN_REF         branch/SHA for raw GitHub fetch, default main
+  PLOW_CHAT_SEED_RAW_BASE      full raw URL override
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --scaffold) SCAFFOLD_DIR="$2"; shift 2 ;;
     --data-dir) DATA_DIR="$2"; shift 2 ;;
-    --source-dir) SOURCE_DIR="$2"; shift 2 ;;
+    --source-dir|--local-dir) SOURCE_DIR="$2"; shift 2 ;;
+    --ref) PLUGIN_REF="$2"; RAW_BASE="https://raw.githubusercontent.com/plow-pbc/seed-hermes-plow-chat/${PLUGIN_REF}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
 
+if [[ -z "$SOURCE_DIR" && -f "${SCRIPT_ROOT}/plugin.yaml" && -f "${SCRIPT_ROOT}/__init__.py" ]]; then
+  SOURCE_DIR="$SCRIPT_ROOT"
+fi
+if [[ -z "$DATA_DIR" ]]; then
+  DATA_DIR="${SCAFFOLD_DIR%/}/data"
+fi
 PLUGIN_DIR="${DATA_DIR%/}/plugins/${PLUGIN_NAME}"
 CONFIG_FILE="${DATA_DIR%/}/config.yaml"
 

@@ -2,8 +2,9 @@
 set -euo pipefail
 
 BASE_URL="${PLOW_CHAT_BASE_URL:-https://chat.plow.co}"
-DATA_DIR="${HERMES_DATA_DIR:-./data}"
-LINE_ID="${PLOW_CHAT_LINE:-${PLOW_CHAT_LINE_ID:-}}"
+SCAFFOLD_DIR="${HERMES_SCAFFOLD_DIR:-./hermes-agent}"
+DATA_DIR="${HERMES_DATA_DIR:-}"
+LINE_ID="${PLOW_CHAT_LINE:-}"
 DISPLAY_NAME="${PLOW_CHAT_DISPLAY_NAME:-Hermes user}"
 TIMEOUT_SECONDS="${PLOW_CHAT_VERIFY_TIMEOUT:-900}"
 POLL_INTERVAL="${PLOW_CHAT_VERIFY_POLL_INTERVAL:-5}"
@@ -13,25 +14,25 @@ usage() {
   cat <<'EOF'
 Usage: ref/scripts/create_plow_chat_curl.sh [options]
 
-Creates a Plow Chat using curl, writes PLOW_CHAT_* to ./data/.env, prints the
-verification code, and polls GET /v1/chats/{uid} with X-Chat-Secret-Key until
-the chat becomes active or the timeout expires.
+Creates a Plow Chat using curl, writes PLOW_CHAT_* to the target scaffold's
+data/.env, prints the verification code, and polls GET /v1/chats/{uid} with
+X-Chat-Secret-Key until the chat becomes active or the timeout expires.
 
 Options:
-  --data-dir PATH        Hermes data directory, default ./data
+  --scaffold PATH        seed-hermes scaffold directory, default ./hermes-agent
+  --data-dir PATH        Explicit Hermes data directory override
   --base-url URL         Plow Chat base URL, default https://chat.plow.co
   --line ln_...         Optional line uid override; default auto-discovers from /v1/lines
-  --line-id ln_...      Alias for --line
   --display-name NAME   Member display name, default "Hermes user"
   --timeout SECONDS     Poll timeout, default 900
   --interval SECONDS    Poll interval, default 5
   --no-poll             Create the chat and write env, then exit
 
 Environment overrides:
+  HERMES_SCAFFOLD_DIR
   HERMES_DATA_DIR
   PLOW_CHAT_BASE_URL
   PLOW_CHAT_LINE         Optional line uid override
-  PLOW_CHAT_LINE_ID
   PLOW_CHAT_DISPLAY_NAME
   PLOW_CHAT_VERIFY_TIMEOUT
   PLOW_CHAT_VERIFY_POLL_INTERVAL
@@ -40,9 +41,10 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --scaffold) SCAFFOLD_DIR="$2"; shift 2 ;;
     --data-dir) DATA_DIR="$2"; shift 2 ;;
     --base-url) BASE_URL="$2"; shift 2 ;;
-    --line|--line-id) LINE_ID="$2"; shift 2 ;;
+    --line) LINE_ID="$2"; shift 2 ;;
     --display-name) DISPLAY_NAME="$2"; shift 2 ;;
     --timeout) TIMEOUT_SECONDS="$2"; shift 2 ;;
     --interval) POLL_INTERVAL="$2"; shift 2 ;;
@@ -53,6 +55,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 BASE_URL="${BASE_URL%/}"
+if [[ -z "$DATA_DIR" ]]; then
+  DATA_DIR="${SCAFFOLD_DIR%/}/data"
+fi
 ENV_FILE="${DATA_DIR%/}/.env"
 
 command -v curl >/dev/null 2>&1 || {

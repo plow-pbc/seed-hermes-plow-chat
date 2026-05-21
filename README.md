@@ -7,19 +7,19 @@ wires Hermes to the [Plow Chat](https://github.com/plow-pbc/seed-plow-chat)
 API: Hermes sends replies through `POST /v1/chats/{chat_uid}/messages` and
 receives user replies from Plow's WebSocket stream.
 
-The target install model is direct mount into Docker-backed Hermes data. The
-host places this repository's plugin files under
-`./data/plugins/plow-chat-platform/`, pre-enables the manifest name in
-`./data/config.yaml`, writes `PLOW_CHAT_*` to `./data/.env`, and then starts the
-Hermes container. The host does not run `hermes plugins install`, clone git
-repositories, or depend on Python.
+The target install model is direct mount into a seed-hermes Docker scaffold.
+The host places this repository's plugin files under
+`./hermes-agent/data/plugins/plow-chat-platform/`, pre-enables the manifest name
+in `./hermes-agent/data/config.yaml`, writes `PLOW_CHAT_*` to
+`./hermes-agent/data/.env`, and then starts the Hermes container. The host does
+not run `hermes plugins install`, clone git repositories, or depend on Python.
 
 ## Required plugin files
 
 The mounted plugin directory must contain this exact file set:
 
 ```text
-data/plugins/plow-chat-platform/
+hermes-agent/data/plugins/plow-chat-platform/
   plugin.yaml
   __init__.py
   ref/hermes-plugin/plow_chat/adapter.py
@@ -31,23 +31,23 @@ the adapter is missing, so preserving that layout is required.
 
 ## Direct-mount install
 
-From the host folder that contains `compose.yaml` and `data/`:
+From the parent folder that contains the seed-hermes scaffold at
+`./hermes-agent/`:
 
 ```bash
-mkdir -p data
 curl -fsSL https://raw.githubusercontent.com/plow-pbc/seed-hermes-plow-chat/main/ref/scripts/install_direct_mount.sh \
   -o /tmp/install_plow_chat.sh
-bash /tmp/install_plow_chat.sh --data-dir ./data
+bash /tmp/install_plow_chat.sh --scaffold ./hermes-agent
 ```
 
-When running from a local checkout, avoid network fetches by copying from the
-checkout:
+Pin a published source with `PLOW_CHAT_PLUGIN_REF=<branch-or-sha>`. When running
+from a local checkout, avoid network fetches by copying from the checkout:
 
 ```bash
-ref/scripts/install_direct_mount.sh --data-dir ./data --source-dir .
+PLOW_CHAT_PLUGIN_LOCAL_DIR=. ref/scripts/install_direct_mount.sh --scaffold ./hermes-agent
 ```
 
-The resulting `data/config.yaml` must include the manifest name:
+The resulting `hermes-agent/data/config.yaml` must include the manifest name:
 
 ```yaml
 plugins:
@@ -61,11 +61,11 @@ terminal:
 ## Create and verify a Plow chat
 
 Use the curl-only host helper to create the chat, capture the one-time verify
-code, write `PLOW_CHAT_*` to `./data/.env`, and poll status:
+code, write `PLOW_CHAT_*` to the scaffold's `data/.env`, and poll status:
 
 ```bash
 ref/scripts/create_plow_chat_curl.sh \
-  --data-dir ./data
+  --scaffold ./hermes-agent
 ```
 
 The script auto-discovers an available line with unauthenticated
@@ -94,7 +94,8 @@ from Hermes through the normal Plow message endpoint. Set
 ## Runtime behavior
 
 - `PLOW_CHAT_CHAT_UID` is the single Plow chat handled by this plugin instance.
-- `PLOW_CHAT_SECRET_KEY` stays in `./data/.env`; do not commit it or log it.
+- `PLOW_CHAT_SECRET_KEY` stays in the scaffold's `data/.env`; do not commit it
+  or log it.
 - The adapter subscribes while the chat is still pending and sends the welcome
   on the first `chat_active` frame only.
 - Inbound WebSocket frames with `direction=outbound` are ignored so Hermes does

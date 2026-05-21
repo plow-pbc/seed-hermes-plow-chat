@@ -23,9 +23,10 @@ real verification codes.
 From a disposable Hermes host folder:
 
 ```bash
-mkdir -p data
-ref/scripts/install_direct_mount.sh --data-dir ./data --source-dir /path/to/seed-hermes-plow-chat
-cat >> data/.env <<'EOF'
+mkdir -p hermes-agent/data
+PLOW_CHAT_PLUGIN_LOCAL_DIR=/path/to/seed-hermes-plow-chat \
+  ref/scripts/install_direct_mount.sh --scaffold ./hermes-agent
+cat >> hermes-agent/data/.env <<'EOF'
 PLOW_CHAT_BASE_URL=https://chat.plow.co
 PLOW_CHAT_CHAT_UID=cht_dummy_for_load_check
 PLOW_CHAT_SECRET_KEY=dummy_for_load_check
@@ -46,9 +47,9 @@ request may fail later because the chat credentials are not real.
 ## Live Plow verification run
 
 ```bash
-mkdir -p data
-ref/scripts/install_direct_mount.sh --data-dir ./data --source-dir .
-ref/scripts/create_plow_chat_curl.sh --data-dir ./data
+mkdir -p hermes-agent/data
+PLOW_CHAT_PLUGIN_LOCAL_DIR=. ref/scripts/install_direct_mount.sh --scaffold ./hermes-agent
+ref/scripts/create_plow_chat_curl.sh --scaffold ./hermes-agent
 ```
 
 The script auto-discovers a line. For demo hygiene, pin one with
