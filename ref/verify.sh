@@ -44,12 +44,70 @@ if [[ -e after-install.md || -e ref/scripts/bootstrap_fresh_hermes.sh || -e ref/
   echo 'old host installer artifact still exists' >&2
   exit 1
 fi
-if rg -n 'python3|git clone|hermes plugins|hermes gateway|GH_TOKEN' ref/scripts; then
+if grep -rnE 'python3|git clone|hermes plugins|hermes gateway|GH_TOKEN' ref/scripts; then
   echo 'host scripts still reference Python/git/Hermes installer artifacts' >&2
   exit 1
 fi
 
-# 4. Root plugin installability check.
+# 4. jq-less curl orchestration check. The host path guarantees curl, not jq;
+# keep jq out of PATH and verify optional missing fields do not abort parsing.
+mockdir="$(mktemp -d)"
+mkdir -p "$mockdir/bin" "$mockdir/data"
+cat >"$mockdir/bin/curl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+url="${@: -1}"
+case "$url" in
+  */v1/lines)
+    printf '{"data":[{"uid":"ln_other","provider_key":"+10000000000"},{"uid":"ln_test","provider_key":"+15551234567"}]}\n'
+    ;;
+  */v1/chats)
+    printf '{"participants":[{"type":"agent","uid":"agt_test"},{"type":"member","uid":"mem_test","verification_code":"VERIFY-XXXXXX"}],"uid":"cht_test","secret_key":"test_secret"}\n'
+    ;;
+  */v1/chats/cht_test)
+    count_file="${PLOW_FAKE_COUNT_FILE:?}"
+    count=0
+    [[ -f "$count_file" ]] && count="$(cat "$count_file")"
+    count=$((count + 1))
+    printf '%s' "$count" >"$count_file"
+    if [[ "$count" -lt 2 ]]; then
+      printf '{"participants":[{"type":"member","status":"pending"}],"uid":"cht_test","status":"pending"}\n'
+    else
+      printf '{"participants":[{"type":"member","status":"active"}],"uid":"cht_test","status":"active"}\n'
+    fi
+    ;;
+  *)
+    echo "unexpected url: $url" >&2
+    exit 2
+    ;;
+esac
+SH
+chmod +x "$mockdir/bin/curl"
+PATH="$mockdir/bin:/usr/bin:/bin" PLOW_FAKE_COUNT_FILE="$mockdir/count" \
+  ref/scripts/create_plow_chat_curl.sh \
+    --data-dir "$mockdir/data" \
+    --base-url https://chat.plow.test \
+    --line-id ln_test \
+    --interval 0 \
+    --timeout 3 >"$mockdir/out.txt"
+grep -q 'Verified: chat is active.' "$mockdir/out.txt" || {
+  echo 'jq-less curl orchestration did not poll to active' >&2
+  exit 1
+}
+grep -q 'PLOW_CHAT_CHAT_UID=cht_test' "$mockdir/data/.env" || {
+  echo 'jq-less curl orchestration wrote wrong chat uid' >&2
+  exit 1
+}
+grep -q '"member_uid": "mem_test"' "$mockdir/data/plow_chat_state.json" || {
+  echo 'jq-less curl orchestration wrote wrong member uid' >&2
+  exit 1
+}
+if grep -q 'Code expires at:' "$mockdir/out.txt"; then
+  echo 'jq-less curl orchestration surfaced missing optional expiry' >&2
+  exit 1
+fi
+
+# 5. Root plugin installability check.
 python3 - <<'PY'
 import pathlib
 root = pathlib.Path('.')
@@ -67,7 +125,7 @@ if 'raise ImportError' not in text:
     raise SystemExit('root __init__.py does not fail closed when adapter.py is missing')
 PY
 
-# 5. Secret hygiene check.
+# 6. Secret hygiene check.
 python3 - <<'PY'
 import pathlib, re
 bad = []

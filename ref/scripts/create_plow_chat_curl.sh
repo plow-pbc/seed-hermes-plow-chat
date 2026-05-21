@@ -63,6 +63,43 @@ json_escape() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
+json_object_value() {
+  local json="$1"
+  local key="$2"
+  printf '%s' "$json" |
+    tr '\n' ' ' |
+    grep -oE "\"${key}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" |
+    head -n 1 |
+    sed -nE "s/\"${key}\"[[:space:]]*:[[:space:]]*\"([^\"]*)\"/\1/p" ||
+    true
+}
+
+json_top_value() {
+  local json="$1"
+  local key="$2"
+  local flat
+  flat="$(printf '%s' "$json" | tr '\n' ' ')"
+  # The fallback parser is intentionally narrow: strip participant arrays so
+  # repeated keys like uid/status inside participants cannot be mistaken for
+  # top-level chat fields.
+  flat="$(printf '%s' "$flat" | sed -E 's/"participants"[[:space:]]*:[[:space:]]*\[[^][]*\]//g')"
+  json_object_value "$flat" "$key"
+}
+
+json_member_value() {
+  local json="$1"
+  local key="$2"
+  local member
+  member="$(
+    printf '%s' "$json" |
+      tr '\n' ' ' |
+      grep -oE '\{[^{}]*"type"[[:space:]]*:[[:space:]]*"member"[^{}]*\}' |
+      head -n 1 ||
+      true
+  )"
+  json_object_value "$member" "$key"
+}
+
 json_value() {
   local json="$1"
   local jq_expr="$2"
@@ -71,11 +108,19 @@ json_value() {
     printf '%s' "$json" | jq -r "$jq_expr // empty" 2>/dev/null || true
     return
   fi
-  printf '%s' "$json" |
-    tr '\n' ' ' |
-    grep -oE "\"${key}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" |
-    head -n 1 |
-    sed -nE "s/\"${key}\"[[:space:]]*:[[:space:]]*\"([^\"]*)\"/\1/p"
+  case "$jq_expr" in
+    '.uid // .chat.uid'|'.secret_key // .chat.secret_key'|'.status')
+      json_top_value "$json" "$key"
+      ;;
+    '(.participants[]? | select(.type == "member") | .verification_code) // .verification_code'|\
+    '(.participants[]? | select(.type == "member") | .verification_code_expires_at) // .verification_code_expires_at'|\
+    '(.participants[]? | select(.type == "member") | .uid)')
+      json_member_value "$json" "$key"
+      ;;
+    *)
+      json_object_value "$json" "$key"
+      ;;
+  esac
 }
 
 line_object_by_uid() {
