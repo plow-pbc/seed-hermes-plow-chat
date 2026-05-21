@@ -4,11 +4,11 @@ set -euo pipefail
 ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "$ROOT"
 
-# 1. Hermes adapter-shape check + compile.
+# 1. Adapter shape + compile. Python is a maintainer verification tool here;
+# the documented host install/orchestration path is shell + curl only.
 python3 -m py_compile \
   __init__.py \
-  ref/hermes-plugin/plow_chat/adapter.py \
-  ref/scripts/configure_hermes_env.py
+  ref/hermes-plugin/plow_chat/adapter.py
 
 python3 - <<'PY'
 import pathlib
@@ -20,7 +20,120 @@ if '"plow_chat"' not in adapter and "'plow_chat'" not in adapter:
     raise SystemExit('adapter.py does not register platform name plow_chat')
 PY
 
-# 2. Root plugin installability check.
+# 2. Direct-mount file-set + config enablement check.
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+mkdir -p "$tmpdir/hermes-agent"
+PLOW_CHAT_PLUGIN_LOCAL_DIR=. ref/scripts/install_direct_mount.sh --scaffold "$tmpdir/hermes-agent" >/tmp/seed-hermes-plow-chat-install.out
+
+for path in \
+  "$tmpdir/hermes-agent/data/plugins/plow-chat-platform/plugin.yaml" \
+  "$tmpdir/hermes-agent/data/plugins/plow-chat-platform/__init__.py" \
+  "$tmpdir/hermes-agent/data/plugins/plow-chat-platform/ref/hermes-plugin/plow_chat/adapter.py"
+do
+  [[ -f "$path" ]] || { echo "missing direct-mounted file: $path" >&2; exit 1; }
+done
+
+grep -q 'plow-chat-platform' "$tmpdir/hermes-agent/data/config.yaml" || {
+  echo 'config.yaml does not enable plow-chat-platform' >&2
+  exit 1
+}
+cat >"$tmpdir/hermes-agent/data/config.yaml" <<'YAML'
+plugins:
+  enabled: [other-plugin]
+  disabled:
+    - plow-chat-platform
+    - keep-disabled
+terminal:
+  cwd: /opt/data/workspace
+YAML
+PLOW_CHAT_PLUGIN_LOCAL_DIR=. ref/scripts/install_direct_mount.sh --scaffold "$tmpdir/hermes-agent" >/tmp/seed-hermes-plow-chat-install-existing.out
+grep -q 'enabled: \[other-plugin, plow-chat-platform\]' "$tmpdir/hermes-agent/data/config.yaml" || {
+  echo 'config.yaml inline enabled list was not preserved and extended' >&2
+  exit 1
+}
+if awk '/disabled:/{in_disabled=1; next} in_disabled && /^  [^ ]/{in_disabled=0} in_disabled && /plow-chat-platform/{found=1} END{exit found ? 0 : 1}' "$tmpdir/hermes-agent/data/config.yaml"; then
+  echo 'config.yaml still disables plow-chat-platform after install' >&2
+  exit 1
+fi
+
+# 3. Host shell helpers are syntax-valid and contain no Python/git/Hermes CLI dependency.
+bash -n ref/scripts/install_direct_mount.sh ref/scripts/create_plow_chat_curl.sh
+if [[ -e after-install.md || -e ref/scripts/bootstrap_fresh_hermes.sh || -e ref/scripts/configure_hermes_env.py ]]; then
+  echo 'old host installer artifact still exists' >&2
+  exit 1
+fi
+if grep -rnE 'python3|git clone|hermes plugins|hermes gateway|GH[_]TOKEN|PLOW_CHAT_LINE_ID|--line-id' ref/scripts; then
+  echo 'host scripts still reference Python/git/Hermes installer artifacts' >&2
+  exit 1
+fi
+
+# 4. jq-less curl orchestration check. The host path guarantees curl, not jq;
+# keep jq out of PATH and verify optional missing fields do not abort parsing.
+mockdir="$(mktemp -d)"
+mkdir -p "$mockdir/bin" "$mockdir/hermes-agent"
+for cmd in bash tr grep head sed mktemp mkdir awk mv chmod date sleep dirname cat cp; do
+  target="$(command -v "$cmd")"
+  ln -s "$target" "$mockdir/bin/$cmd"
+done
+cat >"$mockdir/bin/curl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+url="${@: -1}"
+case "$url" in
+  */v1/lines)
+    printf '{"data":[{"uid":"ln_other","provider_key":"+10000000000"},{"uid":"ln_test","provider_key":"+15551234567"}]}\n'
+    ;;
+  */v1/chats)
+    printf '{"participants":[{"type":"agent","uid":"agt_test"},{"type":"member","uid":"mem_test","verification_code":"VERIFY-XXXXXX"}],"uid":"cht_test","secret_key":"test_secret"}\n'
+    ;;
+  */v1/chats/cht_test)
+    count_file="${PLOW_FAKE_COUNT_FILE:?}"
+    count=0
+    [[ -f "$count_file" ]] && count="$(cat "$count_file")"
+    count=$((count + 1))
+    printf '%s' "$count" >"$count_file"
+    if [[ "$count" -lt 2 ]]; then
+      printf '{"participants":[{"type":"member","status":"pending"}],"uid":"cht_test","status":"pending"}\n'
+    else
+      printf '{"participants":[{"type":"member","status":"active"}],"uid":"cht_test","status":"active"}\n'
+    fi
+    ;;
+  *)
+    echo "unexpected url: $url" >&2
+    exit 2
+    ;;
+esac
+SH
+chmod +x "$mockdir/bin/curl"
+PATH="$mockdir/bin" PLOW_FAKE_COUNT_FILE="$mockdir/count" \
+  bash ref/scripts/create_plow_chat_curl.sh \
+    --scaffold "$mockdir/hermes-agent" \
+    --base-url https://chat.plow.test \
+    --interval 0 \
+    --timeout 3 >"$mockdir/out.txt"
+grep -q 'Verified: chat is active.' "$mockdir/out.txt" || {
+  echo 'jq-less curl orchestration did not poll to active' >&2
+  exit 1
+}
+grep -q 'PLOW_CHAT_CHAT_UID=cht_test' "$mockdir/hermes-agent/data/.env" || {
+  echo 'jq-less curl orchestration wrote wrong chat uid' >&2
+  exit 1
+}
+grep -q 'Text VERIFY-XXXXXX from iMessage to +10000000000' "$mockdir/out.txt" || {
+  echo 'jq-less curl orchestration did not surface the selected line phone number' >&2
+  exit 1
+}
+if [[ -e "$mockdir/hermes-agent/data/plow_chat_state.json" ]]; then
+  echo 'curl orchestration wrote secret-bearing sidecar state' >&2
+  exit 1
+fi
+if grep -q 'Code expires at:' "$mockdir/out.txt"; then
+  echo 'jq-less curl orchestration surfaced missing optional expiry' >&2
+  exit 1
+fi
+
+# 5. Root plugin installability check.
 python3 - <<'PY'
 import pathlib
 root = pathlib.Path('.')
@@ -34,44 +147,25 @@ if not (root / '__init__.py').exists():
 text = (root / '__init__.py').read_text()
 if 'register' not in text or 'adapter.py' not in text:
     raise SystemExit('root __init__.py does not expose adapter register(ctx)')
+if 'raise ImportError' not in text:
+    raise SystemExit('root __init__.py does not fail closed when adapter.py is missing')
 PY
 
-# 3. Env writer check.
-python3 - <<'PY'
-import json, pathlib, subprocess, tempfile
-with tempfile.TemporaryDirectory() as td:
-    root = pathlib.Path(td)
-    state = root / 'state.json'
-    env = root / '.env'
-    state.write_text(json.dumps({
-        'base_url': 'https://chat.plow.co',
-        'chat_uid': 'cht_dummy',
-        'chat_secret_key': 'dummy_secret_for_verify_only',
-    }))
-    result = subprocess.run(
-        ['python3', 'ref/scripts/configure_hermes_env.py', str(state), '--env-file', str(env)],
-        capture_output=True, text=True, check=True,
-    )
-    if 'dummy_secret_for_verify_only' in result.stdout:
-        raise SystemExit('configure_hermes_env.py printed the secret')
-    content = env.read_text()
-    required = [
-        'PLOW_CHAT_BASE_URL=https://chat.plow.co',
-        'PLOW_CHAT_CHAT_UID=cht_dummy',
-        'PLOW_CHAT_SECRET_KEY=dummy_secret_for_verify_only',
-        'PLOW_CHAT_HOME_CHANNEL=cht_dummy',
-    ]
-    missing = [item for item in required if item not in content]
-    if missing:
-        raise SystemExit('env writer missing: ' + ', '.join(missing))
-PY
-
-# 4. Secret hygiene check.
+# 6. Secret hygiene check.
 python3 - <<'PY'
 import pathlib, re
 bad = []
-for path in [pathlib.Path('README.md'), pathlib.Path('SEED.md'), pathlib.Path('plugin.yaml'),
-             pathlib.Path('__init__.py'), pathlib.Path('after-install.md'), pathlib.Path('ref')]:
+paths = [
+    pathlib.Path('README.md'),
+    pathlib.Path('SEED.md'),
+    pathlib.Path('TESTING.md'),
+    pathlib.Path('plugin.yaml'),
+    pathlib.Path('__init__.py'),
+    pathlib.Path('ref'),
+]
+for path in paths:
+    if not path.exists():
+        continue
     files = [path] if path.is_file() else [p for p in path.rglob('*') if p.is_file()]
     for file in files:
         text = file.read_text(errors='ignore')

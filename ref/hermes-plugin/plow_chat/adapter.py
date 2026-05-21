@@ -380,7 +380,7 @@ def register(ctx):
         validate_config=validate_config,
         is_connected=is_connected,
         required_env=["PLOW_CHAT_CHAT_UID", "PLOW_CHAT_SECRET_KEY"],
-        install_hint="pip install aiohttp; create and verify a Plow chat first",
+        install_hint="Create and verify a Plow chat, then set PLOW_CHAT_* in Hermes data/.env",
         env_enablement_fn=_env_enablement,
         cron_deliver_env_var="PLOW_CHAT_HOME_CHANNEL",
         standalone_sender_fn=_standalone_send,
