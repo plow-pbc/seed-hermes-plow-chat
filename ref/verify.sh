@@ -37,6 +37,24 @@ grep -q 'plow-chat-platform' "$tmpdir/data/config.yaml" || {
   echo 'config.yaml does not enable plow-chat-platform' >&2
   exit 1
 }
+cat >"$tmpdir/data/config.yaml" <<'YAML'
+plugins:
+  enabled: [other-plugin]
+  disabled:
+    - plow-chat-platform
+    - keep-disabled
+terminal:
+  cwd: /opt/data/workspace
+YAML
+ref/scripts/install_direct_mount.sh --data-dir "$tmpdir/data" --source-dir . >/tmp/seed-hermes-plow-chat-install-existing.out
+grep -q 'enabled: \[other-plugin, plow-chat-platform\]' "$tmpdir/data/config.yaml" || {
+  echo 'config.yaml inline enabled list was not preserved and extended' >&2
+  exit 1
+}
+if awk '/disabled:/{in_disabled=1; next} in_disabled && /^  [^ ]/{in_disabled=0} in_disabled && /plow-chat-platform/{found=1} END{exit found ? 0 : 1}' "$tmpdir/data/config.yaml"; then
+  echo 'config.yaml still disables plow-chat-platform after install' >&2
+  exit 1
+fi
 
 # 3. Host shell helpers are syntax-valid and contain no Python/git/Hermes CLI dependency.
 bash -n ref/scripts/install_direct_mount.sh ref/scripts/create_plow_chat_curl.sh
@@ -53,6 +71,10 @@ fi
 # keep jq out of PATH and verify optional missing fields do not abort parsing.
 mockdir="$(mktemp -d)"
 mkdir -p "$mockdir/bin" "$mockdir/data"
+for cmd in bash tr grep head sed mktemp mkdir awk mv chmod date sleep dirname cat; do
+  target="$(command -v "$cmd")"
+  ln -s "$target" "$mockdir/bin/$cmd"
+done
 cat >"$mockdir/bin/curl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -83,8 +105,8 @@ case "$url" in
 esac
 SH
 chmod +x "$mockdir/bin/curl"
-PATH="$mockdir/bin:/usr/bin:/bin" PLOW_FAKE_COUNT_FILE="$mockdir/count" \
-  ref/scripts/create_plow_chat_curl.sh \
+PATH="$mockdir/bin" PLOW_FAKE_COUNT_FILE="$mockdir/count" \
+  bash ref/scripts/create_plow_chat_curl.sh \
     --data-dir "$mockdir/data" \
     --base-url https://chat.plow.test \
     --interval 0 \
@@ -97,18 +119,14 @@ grep -q 'PLOW_CHAT_CHAT_UID=cht_test' "$mockdir/data/.env" || {
   echo 'jq-less curl orchestration wrote wrong chat uid' >&2
   exit 1
 }
-grep -q '"member_uid": "mem_test"' "$mockdir/data/plow_chat_state.json" || {
-  echo 'jq-less curl orchestration wrote wrong member uid' >&2
-  exit 1
-}
-grep -q '"line_uid": "ln_other"' "$mockdir/data/plow_chat_state.json" || {
-  echo 'jq-less curl orchestration did not auto-select the first discovered line' >&2
-  exit 1
-}
 grep -q 'Text VERIFY-XXXXXX from iMessage to +10000000000' "$mockdir/out.txt" || {
   echo 'jq-less curl orchestration did not surface the selected line phone number' >&2
   exit 1
 }
+if [[ -e "$mockdir/data/plow_chat_state.json" ]]; then
+  echo 'curl orchestration wrote secret-bearing sidecar state' >&2
+  exit 1
+fi
 if grep -q 'Code expires at:' "$mockdir/out.txt"; then
   echo 'jq-less curl orchestration surfaced missing optional expiry' >&2
   exit 1

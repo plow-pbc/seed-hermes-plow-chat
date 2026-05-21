@@ -54,7 +54,6 @@ done
 
 BASE_URL="${BASE_URL%/}"
 ENV_FILE="${DATA_DIR%/}/.env"
-STATE_FILE="${DATA_DIR%/}/plow_chat_state.json"
 
 command -v curl >/dev/null 2>&1 || {
   echo "Missing required command: curl" >&2
@@ -185,7 +184,6 @@ CHAT_UID="$(json_value "$CHAT_JSON" '.uid // .chat.uid' 'uid')"
 SECRET_KEY="$(json_value "$CHAT_JSON" '.secret_key // .chat.secret_key' 'secret_key')"
 VERIFY_CODE="$(json_value "$CHAT_JSON" '(.participants[]? | select(.type == "member") | .verification_code) // .verification_code' 'verification_code')"
 VERIFY_EXPIRES_AT="$(json_value "$CHAT_JSON" '(.participants[]? | select(.type == "member") | .verification_code_expires_at) // .verification_code_expires_at' 'verification_code_expires_at')"
-MEMBER_UID="$(json_value "$CHAT_JSON" '(.participants[]? | select(.type == "member") | .uid)' 'uid')"
 
 if [[ -z "$CHAT_UID" || -z "$SECRET_KEY" || -z "$VERIFY_CODE" ]]; then
   echo "Could not parse chat uid, secret key, or verification code from Plow Chat response." >&2
@@ -194,19 +192,6 @@ if [[ -z "$CHAT_UID" || -z "$SECRET_KEY" || -z "$VERIFY_CODE" ]]; then
 fi
 
 mkdir -p "$DATA_DIR"
-cat >"$STATE_FILE" <<EOF
-{
-  "base_url": "$BASE_URL",
-  "line_uid": "$LINE_ID",
-  "line_provider_key": "$LINE_PROVIDER_KEY",
-  "chat_uid": "$CHAT_UID",
-  "member_uid": "$MEMBER_UID",
-  "verification_code": "$VERIFY_CODE",
-  "verification_code_expires_at": "$VERIFY_EXPIRES_AT"
-}
-EOF
-chmod 600 "$STATE_FILE" 2>/dev/null || true
-
 write_env_var "PLOW_CHAT_BASE_URL" "$BASE_URL"
 write_env_var "PLOW_CHAT_CHAT_UID" "$CHAT_UID"
 write_env_var "PLOW_CHAT_SECRET_KEY" "$SECRET_KEY"

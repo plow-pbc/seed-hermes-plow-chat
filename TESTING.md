@@ -3,8 +3,14 @@
 ## Maintainer checks
 
 ```bash
+just test
+```
+
+Equivalent direct commands:
+
+```bash
 ref/verify.sh
-pytest -q
+uvx pytest -q
 ```
 
 These checks prove the direct-mounted file set is complete, `config.yaml`

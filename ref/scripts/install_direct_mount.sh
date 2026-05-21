@@ -71,43 +71,117 @@ EOF
     return
   fi
 
-  if grep -Eq '^[[:space:]]*-[[:space:]]*plow-chat-platform[[:space:]]*$|enabled:[[:space:]]*\[[^]]*plow-chat-platform' "$CONFIG_FILE"; then
-    return
-  fi
-
   local tmp
   tmp="$(mktemp)"
   awk '
-    BEGIN { in_plugins = 0; inserted = 0; saw_plugins = 0 }
+    function trim(s) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+      return s
+    }
+    function flush_enabled() {
+      if (in_enabled && !enabled_has) {
+        print "    - plow-chat-platform"
+      }
+      in_enabled = 0
+    }
+    function remove_from_inline_list(line, key,    n, parts, i, item, kept) {
+      if (!match(line, /\[[^]]*\]/)) {
+        return line
+      }
+      n = split(substr(line, RSTART + 1, RLENGTH - 2), parts, ",")
+      kept = ""
+      for (i = 1; i <= n; i++) {
+        item = trim(parts[i])
+        gsub(/^["\047]|["\047]$/, "", item)
+        if (item == "" || item == key) {
+          continue
+        }
+        kept = kept (kept == "" ? "" : ", ") item
+      }
+      return substr(line, 1, RSTART - 1) "[" kept "]" substr(line, RSTART + RLENGTH)
+    }
+    function append_to_inline_list(line, key,    before, inside, after) {
+      if (line ~ key) {
+        return line
+      }
+      if (!match(line, /\[[^]]*\]/)) {
+        return line
+      }
+      before = substr(line, 1, RSTART)
+      inside = trim(substr(line, RSTART + 1, RLENGTH - 2))
+      after = substr(line, RSTART + RLENGTH - 1)
+      return before (inside == "" ? key : inside ", " key) after
+    }
+    BEGIN {
+      in_plugins = 0
+      in_enabled = 0
+      in_disabled = 0
+      saw_plugins = 0
+      saw_enabled = 0
+      enabled_has = 0
+    }
     /^plugins:[[:space:]]*$/ {
+      flush_enabled()
       saw_plugins = 1
       in_plugins = 1
+      in_disabled = 0
       print
       next
     }
     in_plugins && /^[^[:space:]][^:]*:/ {
-      if (!inserted) {
+      flush_enabled()
+      if (!saw_enabled) {
         print "  enabled:"
         print "    - plow-chat-platform"
-        inserted = 1
       }
       in_plugins = 0
+      in_disabled = 0
     }
-    in_plugins && /^  enabled:[[:space:]]*\[[[:space:]]*\][[:space:]]*$/ {
-      print "  enabled:"
-      print "    - plow-chat-platform"
-      inserted = 1
+    in_plugins && /^  enabled:[[:space:]]*\[/ {
+      flush_enabled()
+      saw_enabled = 1
+      print append_to_inline_list($0, "plow-chat-platform")
       next
     }
     in_plugins && /^  enabled:[[:space:]]*$/ {
+      flush_enabled()
+      saw_enabled = 1
+      in_enabled = 1
+      enabled_has = 0
+      in_disabled = 0
       print
-      print "    - plow-chat-platform"
-      inserted = 1
       next
+    }
+    in_plugins && /^    -[[:space:]]*plow-chat-platform[[:space:]]*$/ {
+      if (in_enabled) {
+        enabled_has = 1
+      }
+      if (in_disabled) {
+        next
+      }
+      print
+      next
+    }
+    in_enabled && !/^    -/ {
+      flush_enabled()
+    }
+    in_plugins && /^  disabled:[[:space:]]*\[/ {
+      in_disabled = 0
+      print remove_from_inline_list($0, "plow-chat-platform")
+      next
+    }
+    in_plugins && /^  disabled:[[:space:]]*$/ {
+      in_disabled = 1
+      print
+      next
+    }
+    in_plugins && /^  [^[:space:]][^:]*:/ {
+      in_disabled = 0
     }
     { print }
     END {
-      if (in_plugins && !inserted) {
+      flush_enabled()
+      if (in_plugins && !saw_enabled) {
         print "  enabled:"
         print "    - plow-chat-platform"
       }
