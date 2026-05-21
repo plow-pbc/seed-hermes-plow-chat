@@ -2,56 +2,104 @@
 
 ## Purpose
 
-This SEED installs a Hermes Agent custom gateway platform named `plow_chat` that wires Hermes into the [Plow Chat](https://github.com/plow-pbc/seed-plow-chat) API — sending Hermes responses through `POST /v1/chats/{chat_uid}/messages` and receiving user replies over the Plow Chat WebSocket stream at `/v1/ws`.
+This SEED provides the Hermes gateway platform plugin named `plow_chat`. It
+wires Hermes to the [Plow Chat](https://github.com/plow-pbc/seed-plow-chat)
+API: Hermes sends replies through `POST /v1/chats/{chat_uid}/messages` and
+receives user replies from Plow's WebSocket stream.
 
-The repository root is also an installable Hermes plugin. A fresh Hermes can point directly at this SEED with `hermes plugins install <git-url-or-file-url> --enable`; the root `plugin.yaml` and `__init__.py` load the reference adapter from `ref/hermes-plugin/plow_chat/`.
+The target install model is direct mount into Docker-backed Hermes data. The
+host places this repository's plugin files under
+`./data/plugins/plow-chat-platform/`, pre-enables the manifest name in
+`./data/config.yaml`, writes `PLOW_CHAT_*` to `./data/.env`, and then starts the
+Hermes container. The host does not run `hermes plugins install`, clone git
+repositories, or depend on Python.
 
-## Dependencies
+## Required plugin files
 
-- [`seed-plow-chat`](https://github.com/plow-pbc/seed-plow-chat) — the API surface (endpoints, frame types, auth model) is defined there, not restated here. The bootstrap script clones it on demand to `~/.cache/seed-plow-chat/` and uses its example scripts for chat creation and status checks.
-- Hermes Agent with gateway/plugin support.
-- Python `aiohttp` available to Hermes' runtime.
+The mounted plugin directory must contain this exact file set:
 
-## Quick start: fresh Hermes -> Plow Chat
-
-From a fresh Hermes install with this SEED checked out:
-
-```bash
-cd seed-hermes-plow-chat
-ref/scripts/bootstrap_fresh_hermes.sh --line-id ln_YOUR_PLOW_LINE_ID
+```text
+data/plugins/plow-chat-platform/
+  plugin.yaml
+  __init__.py
+  ref/hermes-plugin/plow_chat/adapter.py
 ```
 
-Find an available `--line-id` with `curl -s https://chat.plow.co/v1/lines | jq '.data[].uid'` — pick the line you want Hermes to message users through.
+`plugin.yaml` is the manifest Hermes discovers. `__init__.py` loads
+`ref/hermes-plugin/plow_chat/adapter.py` and raises `ImportError` during boot if
+the adapter is missing, so preserving that layout is required.
 
-The script installs this repo as a Hermes plugin, clones [`seed-plow-chat`](https://github.com/plow-pbc/seed-plow-chat) to `~/.cache/seed-plow-chat/` if it's not already there, creates a Plow chat, writes the Hermes env vars, and prints a `VERIFY-XXXXXX` code plus the Plow line. Text that code to the line from the phone/iMessage account that should talk to Hermes.
+## Direct-mount install
 
-Then start or restart the gateway immediately, even before verification:
-
-```bash
-hermes gateway restart
-```
-
-The adapter can connect to Plow's WebSocket while the chat is still pending. When the user texts the verification code, Plow emits `chat_active`; Hermes sends a welcome message automatically and auto-approves the verified Plow member in Hermes' DM pairing store. The user's first normal reply should go straight to Hermes instead of receiving a generic pairing-code prompt.
-
-Manual install path:
+From the host folder that contains `compose.yaml` and `data/`:
 
 ```bash
-hermes plugins install "file://$(pwd)" --force --enable
-git clone https://github.com/plow-pbc/seed-plow-chat.git ~/.cache/seed-plow-chat
-python3 ~/.cache/seed-plow-chat/ref/examples/create_chat.py --state ~/.hermes/plow_chat_state.json
-python3 ref/scripts/configure_hermes_env.py ~/.hermes/plow_chat_state.json
-hermes gateway restart
-# text the VERIFY code; Hermes will send the welcome message on chat_active
+mkdir -p data
+curl -fsSL https://raw.githubusercontent.com/plow-pbc/seed-hermes-plow-chat/main/ref/scripts/install_direct_mount.sh \
+  -o /tmp/install_plow_chat.sh
+bash /tmp/install_plow_chat.sh --data-dir ./data
 ```
 
-## Important behavior
+When running from a local checkout, avoid network fetches by copying from the
+checkout:
 
-- The chat secret is written only to the local state file and Hermes `.env`; it is not printed by the setup helper.
-- The adapter is one-chat-per-plugin-instance: `PLOW_CHAT_CHAT_UID` is the Hermes chat id and home channel.
-- The adapter subscribes to the WebSocket before activation, sends one welcome message on `chat_active`, and can be customized with `PLOW_CHAT_WELCOME_MESSAGE` or disabled with `PLOW_CHAT_AUTO_WELCOME=false`.
-- The adapter best-effort approves verified Plow member ids in Hermes' `plow_chat` pairing store so the first inbound message does not trigger a second pairing flow. Disable with `PLOW_CHAT_AUTO_APPROVE_PAIRING=false`.
-- Inbound WebSocket frames with `direction=outbound` are ignored so Hermes does not answer itself.
-- Rich Markdown is flattened to plain text because the backing channel is iMessage/SMS-style.
+```bash
+ref/scripts/install_direct_mount.sh --data-dir ./data --source-dir .
+```
+
+The resulting `data/config.yaml` must include the manifest name:
+
+```yaml
+plugins:
+  enabled:
+    - plow-chat-platform
+  disabled: []
+terminal:
+  cwd: /opt/data/workspace
+```
+
+## Create and verify a Plow chat
+
+Use the curl-only host helper to create the chat, capture the one-time verify
+code, write `PLOW_CHAT_*` to `./data/.env`, and poll status:
+
+```bash
+ref/scripts/create_plow_chat_curl.sh \
+  --data-dir ./data \
+  --line-id ln_YOUR_DEMO_LINE
+```
+
+If `--line-id` is omitted, the script uses the first line returned by
+`GET /v1/lines`. The script prints the `VERIFY-XXXXXX` code and Plow line
+number, but it does not print the chat secret. Start Hermes with
+`docker compose up` before texting the code so the plugin is subscribed when
+Plow emits `chat_active`.
+
+The host poll uses:
+
+```bash
+curl -fsSL \
+  -H "X-Chat-Secret-Key: <secret>" \
+  "https://chat.plow.co/v1/chats/<chat_uid>"
+```
+
+When the chat becomes `active`, the adapter sends exactly one welcome message
+from Hermes through the normal Plow message endpoint. Set
+`PLOW_CHAT_WELCOME_MESSAGE` to customize it or
+`PLOW_CHAT_AUTO_WELCOME=false` to disable it.
+
+## Runtime behavior
+
+- `PLOW_CHAT_CHAT_UID` is the single Plow chat handled by this plugin instance.
+- `PLOW_CHAT_SECRET_KEY` stays in `./data/.env`; do not commit it or log it.
+- The adapter subscribes while the chat is still pending and sends the welcome
+  on the first `chat_active` frame only.
+- Inbound WebSocket frames with `direction=outbound` are ignored so Hermes does
+  not answer itself.
+- The adapter best-effort approves verified Plow member ids in Hermes'
+  `plow_chat` pairing store so the first inbound message reaches Hermes.
+- Rich Markdown is flattened to plain text because the backing channel is
+  iMessage/SMS-style.
 
 ## License
 

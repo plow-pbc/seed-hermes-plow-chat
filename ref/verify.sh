@@ -4,11 +4,11 @@ set -euo pipefail
 ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "$ROOT"
 
-# 1. Hermes adapter-shape check + compile.
+# 1. Adapter shape + compile. Python is a maintainer verification tool here;
+# the documented host install/orchestration path is shell + curl only.
 python3 -m py_compile \
   __init__.py \
-  ref/hermes-plugin/plow_chat/adapter.py \
-  ref/scripts/configure_hermes_env.py
+  ref/hermes-plugin/plow_chat/adapter.py
 
 python3 - <<'PY'
 import pathlib
@@ -20,7 +20,36 @@ if '"plow_chat"' not in adapter and "'plow_chat'" not in adapter:
     raise SystemExit('adapter.py does not register platform name plow_chat')
 PY
 
-# 2. Root plugin installability check.
+# 2. Direct-mount file-set + config enablement check.
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+ref/scripts/install_direct_mount.sh --data-dir "$tmpdir/data" --source-dir . >/tmp/seed-hermes-plow-chat-install.out
+
+for path in \
+  "$tmpdir/data/plugins/plow-chat-platform/plugin.yaml" \
+  "$tmpdir/data/plugins/plow-chat-platform/__init__.py" \
+  "$tmpdir/data/plugins/plow-chat-platform/ref/hermes-plugin/plow_chat/adapter.py"
+do
+  [[ -f "$path" ]] || { echo "missing direct-mounted file: $path" >&2; exit 1; }
+done
+
+grep -q 'plow-chat-platform' "$tmpdir/data/config.yaml" || {
+  echo 'config.yaml does not enable plow-chat-platform' >&2
+  exit 1
+}
+
+# 3. Host shell helpers are syntax-valid and contain no Python/git/Hermes CLI dependency.
+bash -n ref/scripts/install_direct_mount.sh ref/scripts/create_plow_chat_curl.sh
+if [[ -e after-install.md || -e ref/scripts/bootstrap_fresh_hermes.sh || -e ref/scripts/configure_hermes_env.py ]]; then
+  echo 'old host installer artifact still exists' >&2
+  exit 1
+fi
+if rg -n 'python3|git clone|hermes plugins|hermes gateway|GH_TOKEN' ref/scripts; then
+  echo 'host scripts still reference Python/git/Hermes installer artifacts' >&2
+  exit 1
+fi
+
+# 4. Root plugin installability check.
 python3 - <<'PY'
 import pathlib
 root = pathlib.Path('.')
@@ -34,44 +63,25 @@ if not (root / '__init__.py').exists():
 text = (root / '__init__.py').read_text()
 if 'register' not in text or 'adapter.py' not in text:
     raise SystemExit('root __init__.py does not expose adapter register(ctx)')
+if 'raise ImportError' not in text:
+    raise SystemExit('root __init__.py does not fail closed when adapter.py is missing')
 PY
 
-# 3. Env writer check.
-python3 - <<'PY'
-import json, pathlib, subprocess, tempfile
-with tempfile.TemporaryDirectory() as td:
-    root = pathlib.Path(td)
-    state = root / 'state.json'
-    env = root / '.env'
-    state.write_text(json.dumps({
-        'base_url': 'https://chat.plow.co',
-        'chat_uid': 'cht_dummy',
-        'chat_secret_key': 'dummy_secret_for_verify_only',
-    }))
-    result = subprocess.run(
-        ['python3', 'ref/scripts/configure_hermes_env.py', str(state), '--env-file', str(env)],
-        capture_output=True, text=True, check=True,
-    )
-    if 'dummy_secret_for_verify_only' in result.stdout:
-        raise SystemExit('configure_hermes_env.py printed the secret')
-    content = env.read_text()
-    required = [
-        'PLOW_CHAT_BASE_URL=https://chat.plow.co',
-        'PLOW_CHAT_CHAT_UID=cht_dummy',
-        'PLOW_CHAT_SECRET_KEY=dummy_secret_for_verify_only',
-        'PLOW_CHAT_HOME_CHANNEL=cht_dummy',
-    ]
-    missing = [item for item in required if item not in content]
-    if missing:
-        raise SystemExit('env writer missing: ' + ', '.join(missing))
-PY
-
-# 4. Secret hygiene check.
+# 5. Secret hygiene check.
 python3 - <<'PY'
 import pathlib, re
 bad = []
-for path in [pathlib.Path('README.md'), pathlib.Path('SEED.md'), pathlib.Path('plugin.yaml'),
-             pathlib.Path('__init__.py'), pathlib.Path('after-install.md'), pathlib.Path('ref')]:
+paths = [
+    pathlib.Path('README.md'),
+    pathlib.Path('SEED.md'),
+    pathlib.Path('TESTING.md'),
+    pathlib.Path('plugin.yaml'),
+    pathlib.Path('__init__.py'),
+    pathlib.Path('ref'),
+]
+for path in paths:
+    if not path.exists():
+        continue
     files = [path] if path.is_file() else [p for p in path.rglob('*') if p.is_file()]
     for file in files:
         text = file.read_text(errors='ignore')
