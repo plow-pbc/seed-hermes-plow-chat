@@ -72,7 +72,7 @@ fi
 # keep jq out of PATH and verify optional missing fields do not abort parsing.
 mockdir="$(mktemp -d)"
 mkdir -p "$mockdir/bin" "$mockdir/hermes-agent"
-for cmd in bash tr grep head sed mktemp mkdir awk mv chmod date sleep dirname cat cp; do
+for cmd in bash tr grep head sed mktemp mkdir awk mv chmod date sleep dirname cat cp cut; do
   target="$(command -v "$cmd")"
   ln -s "$target" "$mockdir/bin/$cmd"
 done
@@ -95,6 +95,12 @@ case "$url" in
     else
       printf '{"status":"verified","token":"token_test","chat":{"uid":"cht_test","status":"active","participants":[{"type":"member","status":"active"}]}}\n'
     fi
+    ;;
+  */v1/auth/owner-identity)
+    printf '{"display_name":"Test Owner","phones":["+15551234567"],"emails":["owner@example.test"]}\n'
+    ;;
+  */v1/me/channels)
+    printf '{"channels":[{"provider":"linq","provider_key":"+15551234567"}]}\n'
     ;;
   *)
     echo "unexpected url: $url" >&2
@@ -131,6 +137,30 @@ if [[ -e "$mockdir/hermes-agent/data/plow_chat_state.json" ]]; then
 fi
 if grep -q 'Code expires at:' "$mockdir/out.txt"; then
   echo 'jq-less curl orchestration surfaced missing optional expiry' >&2
+  exit 1
+fi
+if [[ ! -f "$mockdir/hermes-agent/data/.activation.json" ]]; then
+  echo 'curl orchestration did not write activation audit' >&2
+  exit 1
+fi
+grep -q '"activation_secret": "<redacted>"' "$mockdir/hermes-agent/data/.activation.json" || {
+  echo 'activation audit did not redact activation secret' >&2
+  exit 1
+}
+grep -q '"token_last4": "test"' "$mockdir/hermes-agent/data/.activation.json" || {
+  echo 'activation audit did not record token last four' >&2
+  exit 1
+}
+grep -q '"chat_uid": "cht_test"' "$mockdir/hermes-agent/data/.activation.json" || {
+  echo 'activation audit did not record chat uid' >&2
+  exit 1
+}
+grep -q '"owner_identity": {"display_name":"Test Owner","phones":\["+15551234567"\],"emails":\["owner@example.test"\]}' "$mockdir/hermes-agent/data/.activation.json" || {
+  echo 'activation audit did not record owner identity snapshot' >&2
+  exit 1
+}
+if grep -q 'act_test\|token_test' "$mockdir/hermes-agent/data/.activation.json"; then
+  echo 'activation audit leaked full activation secret or token' >&2
   exit 1
 fi
 

@@ -23,6 +23,10 @@ plow-chat-platform. This helper does not call `hermes`, `git`, or the Hermes
 plugin installer. It uses PLOW_CHAT_PLUGIN_LOCAL_DIR when supplied, otherwise it
 downloads the required file set from PLOW_CHAT_PLUGIN_REF.
 
+Run this installer before first boot, then run create_plow_chat_curl.sh until it
+writes PLOW_CHAT_* into data/.env. Start `docker compose up` only after that so
+Hermes boots once with the Plow Chat environment already populated.
+
 Environment overrides:
   HERMES_SCAFFOLD_DIR          default ./hermes-agent
   HERMES_DATA_DIR              explicit data dir override

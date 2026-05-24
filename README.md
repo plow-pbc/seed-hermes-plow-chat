@@ -62,7 +62,7 @@ terminal:
 
 Use the curl-only host helper to start Plow activation with `provision_chat=true`,
 capture the returned session token and chat uid after verification, and write
-`PLOW_CHAT_*` to the scaffold's `data/.env`:
+`PLOW_CHAT_*` to the scaffold's `data/.env` before first container boot:
 
 ```bash
 ref/scripts/create_plow_chat_curl.sh \
@@ -71,8 +71,10 @@ ref/scripts/create_plow_chat_curl.sh \
 
 The script asks Plow to assign an available line and prints the instruction the
 user needs: `Text Plow Activate: ABCDE from iMessage to +1...`. It does not
-print the session token. Start Hermes with `docker compose up` after the script
-writes `.env`.
+print the session token. It also writes a redacted `data/.activation.json` audit
+file with the activation secret removed and only the token last four retained.
+Start Hermes with `docker compose up` after the script writes `.env`, so the
+container boots once with the Plow Chat platform enabled.
 
 The host poll uses:
 
@@ -93,6 +95,8 @@ welcome message from Hermes through the normal Plow message endpoint. Set
 - `PLOW_CHAT_CHAT_UID` is the single Plow chat handled by this plugin instance.
 - `PLOW_CHAT_TOKEN` stays in the scaffold's `data/.env`; do not commit it
   or log it.
+- The activation Bearer token is a user credential, not just a chat secret.
+  Keep `data/.env` and `data/.activation.json` mode `600`.
 - The adapter sends the welcome on the first `chat_active` frame it sees.
 - Inbound WebSocket frames with `direction=outbound` are ignored so Hermes does
   not answer itself.

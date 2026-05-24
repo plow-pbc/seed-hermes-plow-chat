@@ -56,11 +56,12 @@ The verbs performed by the Hermes-side objects. For Plow Chat actions (chat is c
 - A host agent MUST ensure `<seed-hermes-scaffold>/data/config.yaml` exists before first `docker compose up` and contains `plugins.enabled` with `plow-chat-platform`. ^act-enable-config
 - A host agent SHOULD preserve any existing `config.yaml` values while adding this plugin. If no config exists, it MAY write the minimal plugin/terminal skeleton shown in the README. ^act-config-preserve
 - A host agent MAY set `PLOW_CHAT_PLUGIN_LOCAL_DIR` to copy plugin files from a local checkout, or `PLOW_CHAT_PLUGIN_REF` to fetch a specific branch/SHA from GitHub raw URLs. ^act-source-overrides
+- The direct-mount installer MUST NOT start the Hermes container. The host sequence is: install the plugin files, run `create_plow_chat_curl.sh` until verified, then start `docker compose up` once with `data/.env` populated. ^act-boot-sequence
 
 ### plow_chat is configured with Plow chat credentials
 
 - A host agent MUST run `ref/scripts/create_plow_chat_curl.sh --scaffold <seed-hermes-scaffold>` before first Hermes boot for this gateway and write these values into `data/.env`: `PLOW_CHAT_BASE_URL`, `PLOW_CHAT_CHAT_UID`, `PLOW_CHAT_TOKEN`, and `PLOW_CHAT_HOME_CHANNEL`. ^act-write-env
-- The session token MUST be configured through `PLOW_CHAT_TOKEN`; it MUST NOT be committed, printed in logs, or placed in `config.yaml`. ^act-secret-env
+- The session token MUST be configured through `PLOW_CHAT_TOKEN`; it MUST NOT be committed, printed in logs, or placed in `config.yaml`. The shortcut activation returns a user-wide Bearer token that can read user identity surfaces such as `/v1/auth/owner-identity` and `/v1/me/channels`; treat it as a user credential, not a per-chat secret. `data/.env` MUST be mode `600` where the host filesystem supports it. ^act-secret-env
 - When `PLOW_CHAT_CHAT_UID` and `PLOW_CHAT_TOKEN` are present, the plugin's `env_enablement_fn` SHOULD auto-enable `gateway.platforms.plow_chat` and set its home channel to the Plow chat uid. ^act-env-auto-enable
 
 ### Host creates and polls Plow chat with curl
@@ -68,6 +69,7 @@ The verbs performed by the Hermes-side objects. For Plow Chat actions (chat is c
 - The host flow MUST call `POST /v1/auth/activate` with `provision_chat=true`, capture `activation_secret`, and surface `Plow Activate: <display_code>` plus `send_to` to the human. ^act-curl-create
 - The host flow MUST poll `POST /v1/auth/activate/redeem` with `{"activation_secret":"..."}` until redeem returns `status:"verified"` or a local timeout expires. ^act-curl-poll
 - The host flow MUST write the verified redeem `token` and embedded `chat.uid` into the scaffold env as `PLOW_CHAT_TOKEN` and `PLOW_CHAT_CHAT_UID`.
+- The host flow MUST write `data/.activation.json` with mode `600` for audit: activation metadata with `activation_secret` redacted, token last four only, chat uid, line/send-to metadata, and owner/channel snapshots fetched with the verified Bearer token. ^act-activation-audit
 - The timeout path MUST tell the operator that the activation may not have arrived or the code may have expired; recovery is to start activation again. ^act-timeout
 
 ### plow_chat sends a Hermes response
@@ -104,7 +106,7 @@ The verbs performed by the Hermes-side objects. For Plow Chat actions (chat is c
 
 6. **Container plugin-load check.** Prepare `./data` with the direct file set, `plugins.enabled: [plow-chat-platform]`, and dummy or real `PLOW_CHAT_*`; run `docker compose up`. Do logs show platform `plow_chat` registered and no `ImportError` from the plugin root? Expected: yes. ^v-container-load
 
-7. **Optional live chat check.** Run `ref/scripts/create_plow_chat_curl.sh --scaffold ./hermes-agent`, text the printed activation message from iMessage to the printed phone number, and let the script poll. Does it report `verified`, write `PLOW_CHAT_TOKEN` and `PLOW_CHAT_CHAT_UID`, and does a normal iMessage reply reach Hermes after container start? Expected: yes. ^v-live-chat
+7. **Optional live chat check.** Run `ref/scripts/create_plow_chat_curl.sh --scaffold ./hermes-agent`, text the printed activation message from iMessage to the printed phone number, and let the script poll before starting Hermes. Does it report `verified`, write `PLOW_CHAT_TOKEN`, `PLOW_CHAT_CHAT_UID`, and a redacted `data/.activation.json`, and does a normal iMessage reply reach Hermes after first container start? Expected: yes. ^v-live-chat
 
 ## Open
 

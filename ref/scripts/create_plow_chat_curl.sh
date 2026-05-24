@@ -14,7 +14,7 @@ Usage: ref/scripts/create_plow_chat_curl.sh [options]
 
 Starts Plow activation with provision_chat=true, prints the activation message,
 polls activation redeem until verified, then writes PLOW_CHAT_* to the target
-scaffold's data/.env.
+scaffold's data/.env and a redacted data/.activation.json audit file.
 
 Options:
   --scaffold PATH        seed-hermes scaffold directory, default ./hermes-agent
@@ -52,6 +52,7 @@ if [[ -z "$DATA_DIR" ]]; then
   DATA_DIR="${SCAFFOLD_DIR%/}/data"
 fi
 ENV_FILE="${DATA_DIR%/}/.env"
+ACTIVATION_AUDIT_FILE="${DATA_DIR%/}/.activation.json"
 
 command -v curl >/dev/null 2>&1 || {
   echo "Missing required command: curl" >&2
@@ -119,6 +120,50 @@ write_env_var() {
   chmod 600 "$ENV_FILE" 2>/dev/null || true
 }
 
+json_object_or_empty() {
+  local json="$1"
+  if command -v jq >/dev/null 2>&1; then
+    printf '%s' "$json" | jq -c . 2>/dev/null || printf '{}'
+    return
+  fi
+  case "$(printf '%s' "$json" | tr -d '[:space:]' | cut -c1)" in
+    '{'|'[') printf '%s' "$json" ;;
+    *) printf '{}' ;;
+  esac
+}
+
+write_activation_audit() {
+  local token="$1"
+  local chat_uid="$2"
+  local owner_identity_json="$3"
+  local channels_json="$4"
+  local tmp
+  local token_last4="${token: -4}"
+  mkdir -p "$(dirname "$ACTIVATION_AUDIT_FILE")"
+  tmp="$(mktemp)"
+  cat >"$tmp" <<EOF
+{
+  "base_url": "$(json_escape "$BASE_URL")",
+  "verified_at": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')",
+  "activation": {
+    "display_code": "$(json_escape "$DISPLAY_CODE")",
+    "activation_secret": "<redacted>",
+    "send_to": "$(json_escape "$SEND_TO")",
+    "line_id": "$(json_escape "$LINE_ID")"
+  },
+  "redeem": {
+    "status": "verified",
+    "token_last4": "$(json_escape "$token_last4")",
+    "chat_uid": "$(json_escape "$chat_uid")"
+  },
+  "owner_identity": $(json_object_or_empty "$owner_identity_json"),
+  "channels": $(json_object_or_empty "$channels_json")
+}
+EOF
+  mv "$tmp" "$ACTIVATION_AUDIT_FILE"
+  chmod 600 "$ACTIVATION_AUDIT_FILE" 2>/dev/null || true
+}
+
 PAYLOAD="$(printf '{"name":"%s","provision_chat":true}' "$(json_escape "$DISPLAY_NAME")")"
 
 echo "Starting Plow activation..."
@@ -167,14 +212,22 @@ while [[ "$(date +%s)" -lt "$deadline" ]]; do
       echo "Activation verified, but redeem did not include both token and chat uid." >&2
       exit 1
     fi
+    OWNER_IDENTITY_JSON="$(curl -fsSL \
+      -H "Authorization: Bearer ${TOKEN}" \
+      "${BASE_URL}/v1/auth/owner-identity" 2>/dev/null || printf '{}')"
+    CHANNELS_JSON="$(curl -fsSL \
+      -H "Authorization: Bearer ${TOKEN}" \
+      "${BASE_URL}/v1/me/channels" 2>/dev/null || printf '{}')"
     mkdir -p "$DATA_DIR"
     write_env_var "PLOW_CHAT_BASE_URL" "$BASE_URL"
     write_env_var "PLOW_CHAT_CHAT_UID" "$CHAT_UID"
     write_env_var "PLOW_CHAT_TOKEN" "$TOKEN"
     write_env_var "PLOW_CHAT_HOME_CHANNEL" "$CHAT_UID"
+    write_activation_audit "$TOKEN" "$CHAT_UID" "$OWNER_IDENTITY_JSON" "$CHANNELS_JSON"
     echo "Verified: chat is active."
     echo "Chat uid: ${CHAT_UID}"
     echo "Wrote PLOW_CHAT_* to ${ENV_FILE}"
+    echo "Wrote redacted activation audit to ${ACTIVATION_AUDIT_FILE}"
     exit 0
   fi
   sleep "$POLL_INTERVAL"

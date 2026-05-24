@@ -64,7 +64,8 @@ Status: verified
 Verified: chat is active.
 ```
 
-Then start Hermes:
+The helper should write `hermes-agent/data/.env` and a redacted
+`hermes-agent/data/.activation.json`. Then start Hermes:
 
 ```bash
 docker compose up
