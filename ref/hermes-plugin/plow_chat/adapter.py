@@ -86,6 +86,7 @@ class PlowChatAdapter(BasePlatformAdapter):
         self._seen_message_uids: set[str] = set()
         self._stop_event = asyncio.Event()
         self._welcome_sent = False
+        self._checked_initial_chat_status = False
 
     @property
     def name(self) -> str:
@@ -213,6 +214,7 @@ class PlowChatAdapter(BasePlatformAdapter):
         if frame_type == "connected":
             self._mark_connected()
             logger.info("[plow_chat] websocket subscribed")
+            await self._send_welcome_if_chat_already_active()
             return
         if frame_type == "chat_active":
             logger.info("[plow_chat] chat active")
@@ -285,6 +287,26 @@ class PlowChatAdapter(BasePlatformAdapter):
             self._welcome_sent = True
         else:
             logger.warning("[plow_chat] activation welcome send failed: %s", result.error)
+
+    async def _send_welcome_if_chat_already_active(self) -> None:
+        if self._checked_initial_chat_status:
+            return
+        self._checked_initial_chat_status = True
+        try:
+            async with self._http_session.get(
+                f"{self.base_url}/v1/chats/{self.chat_uid}",
+                headers={"Authorization": f"Bearer {self.token}"},
+            ) as resp:
+                data = await resp.json(content_type=None)
+                if resp.status >= 400:
+                    err = data.get("error", {}) if isinstance(data, dict) else {}
+                    logger.warning("[plow_chat] initial chat status check failed: %s", err.get("message") or resp.status)
+                    return
+        except Exception as exc:
+            logger.warning("[plow_chat] initial chat status check failed: %s", exc)
+            return
+        if isinstance(data, dict) and data.get("status") == "active":
+            await self._send_activation_welcome()
 
     def _approve_sender_from_frame(self, frame: dict[str, Any]) -> None:
         """Best-effort approval from activation/verification frames."""
