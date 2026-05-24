@@ -32,7 +32,7 @@ The named entities that exist on the Hermes side. For Plow Chat entities (chats,
 - A Hermes gateway platform named `plow_chat`. ^obj-platform
 - It maps a Plow chat to a Hermes session source with `platform='plow_chat'`, `chat_id=<chat.uid>`, `chat_type='dm'`, and member sender metadata as the user identity.
 - It sends plain text responses through Plow's message creation endpoint.
-- It receives user messages by minting short-lived WebSocket tickets and subscribing to `wss://chat.plow.co/v1/ws?ticket=<ticket>`.
+- It receives user messages by minting short-lived WebSocket tickets and subscribing to `wss://api.plow.co/v1/ws?ticket=<ticket>`.
 
 ### Direct-mounted plugin
 
@@ -44,7 +44,7 @@ The named entities that exist on the Hermes side. For Plow Chat entities (chats,
 ### Host orchestration scripts
 
 - `ref/scripts/install_direct_mount.sh` is the canonical curl/shell installer for this gateway. It targets a seed-hermes scaffold with `--scaffold <dir>` (default `./hermes-agent`) or an explicit `--data-dir <dir>`, places the required plugin file set under `data/plugins/plow-chat-platform/`, enables `plow-chat-platform` in `data/config.yaml`, and supports `PLOW_CHAT_PLUGIN_LOCAL_DIR` and `PLOW_CHAT_PLUGIN_REF` source overrides. ^obj-direct-install-script
-- `ref/scripts/create_plow_chat_curl.sh` is a curl/shell helper that targets the same scaffold with `--scaffold <dir>` or `--data-dir <dir>`, creates a Plow chat, prints the one-time verification code, writes `PLOW_CHAT_*` to `data/.env`, and polls `GET /v1/chats/{chat_uid}` until `active` or timeout. ^obj-curl-chat-script
+- `ref/scripts/create_plow_chat_curl.sh` is a curl/shell helper that targets the same scaffold with `--scaffold <dir>` or `--data-dir <dir>`, starts Plow activation with `provision_chat=true`, prints the one-time activation message, writes `PLOW_CHAT_*` to `data/.env`, and polls activation redeem until verified or timeout. ^obj-curl-chat-script
 
 ## Actions
 
@@ -59,15 +59,16 @@ The verbs performed by the Hermes-side objects. For Plow Chat actions (chat is c
 
 ### plow_chat is configured with Plow chat credentials
 
-- A host agent MUST run `ref/scripts/create_plow_chat_curl.sh --scaffold <seed-hermes-scaffold>` before first Hermes boot for this gateway and write these values into `data/.env`: `PLOW_CHAT_BASE_URL`, `PLOW_CHAT_CHAT_UID`, `PLOW_CHAT_SECRET_KEY`, and `PLOW_CHAT_HOME_CHANNEL`. ^act-write-env
-- The chat secret MUST be configured through `PLOW_CHAT_SECRET_KEY`; it MUST NOT be committed, printed in logs, or placed in `config.yaml`. ^act-secret-env
-- When `PLOW_CHAT_CHAT_UID` and `PLOW_CHAT_SECRET_KEY` are present, the plugin's `env_enablement_fn` SHOULD auto-enable `gateway.platforms.plow_chat` and set its home channel to the Plow chat uid. ^act-env-auto-enable
+- A host agent MUST run `ref/scripts/create_plow_chat_curl.sh --scaffold <seed-hermes-scaffold>` before first Hermes boot for this gateway and write these values into `data/.env`: `PLOW_CHAT_BASE_URL`, `PLOW_CHAT_CHAT_UID`, `PLOW_CHAT_TOKEN`, and `PLOW_CHAT_HOME_CHANNEL`. ^act-write-env
+- The session token MUST be configured through `PLOW_CHAT_TOKEN`; it MUST NOT be committed, printed in logs, or placed in `config.yaml`. ^act-secret-env
+- When `PLOW_CHAT_CHAT_UID` and `PLOW_CHAT_TOKEN` are present, the plugin's `env_enablement_fn` SHOULD auto-enable `gateway.platforms.plow_chat` and set its home channel to the Plow chat uid. ^act-env-auto-enable
 
 ### Host creates and polls Plow chat with curl
 
-- The host flow MUST auto-discover an available line with unauthenticated `GET /v1/lines`, create a chat with unauthenticated `POST /v1/chats`, capture the response `uid`, one-time `secret_key`, and member `verification_code`, and surface the verification code plus line `provider_key` to the human. It MAY accept an optional line override for controlled demos. ^act-curl-create
-- The host flow MUST poll `GET /v1/chats/{chat_uid}` with `X-Chat-Secret-Key: <secret>` until the chat status is `active`, `failed`, or a local timeout expires. ^act-curl-poll
-- The timeout path MUST tell the operator that the verification may not have arrived, Hermes may not have been running to send the welcome, or the code may have expired; recovery is to recreate the chat. ^act-timeout
+- The host flow MUST call `POST /v1/auth/activate` with `provision_chat=true`, capture `activation_secret`, and surface `Plow Activate: <display_code>` plus `send_to` to the human. ^act-curl-create
+- The host flow MUST poll `POST /v1/auth/activate/redeem` with `{"activation_secret":"..."}` until redeem returns `status:"verified"` or a local timeout expires. ^act-curl-poll
+- The host flow MUST write the verified redeem `token` and embedded `chat.uid` into the scaffold env as `PLOW_CHAT_TOKEN` and `PLOW_CHAT_CHAT_UID`.
+- The timeout path MUST tell the operator that the activation may not have arrived or the code may have expired; recovery is to start activation again. ^act-timeout
 
 ### plow_chat sends a Hermes response
 
@@ -85,7 +86,7 @@ The verbs performed by the Hermes-side objects. For Plow Chat actions (chat is c
 ### plow_chat handles status and activation frames
 
 - The adapter MAY log `message_status_updated` frames for outbound delivery transitions. ^act-status
-- The adapter SHOULD subscribe while the Plow chat is still pending and, on `chat_active`, send exactly one setup-success welcome message through the normal Plow message endpoint. ^act-activation-welcome
+- If Plow emits `chat_active` while the adapter is connected, the adapter SHOULD send exactly one setup-success welcome message through the normal Plow message endpoint. ^act-activation-welcome
 - The adapter SHOULD surface `chat_activation_failed` as a fatal setup error, because recovery is delete and recreate.
 - The adapter SHOULD mark the platform connected only after the WebSocket's initial `connected` frame.
 
@@ -99,11 +100,11 @@ The verbs performed by the Hermes-side objects. For Plow Chat actions (chat is c
 
 4. **Host shell syntax check.** Run `bash -n ref/scripts/install_direct_mount.sh ref/scripts/create_plow_chat_curl.sh`. Does it exit 0? Expected: yes. ^v-shell-syntax
 
-5. **Secret hygiene check.** Search committed files. Do they avoid literal `sk_` chat secrets and one-time verification codes? Expected: yes. ^v-secret-hygiene
+5. **Secret hygiene check.** Search committed files. Do they avoid literal-looking session tokens and one-time activation codes? Expected: yes. ^v-secret-hygiene
 
 6. **Container plugin-load check.** Prepare `./data` with the direct file set, `plugins.enabled: [plow-chat-platform]`, and dummy or real `PLOW_CHAT_*`; run `docker compose up`. Do logs show platform `plow_chat` registered and no `ImportError` from the plugin root? Expected: yes. ^v-container-load
 
-7. **Optional live chat check.** Run `ref/scripts/create_plow_chat_curl.sh --scaffold ./hermes-agent`, start Hermes, text the printed verification code from iMessage to the printed phone number, and let the script poll. Does it report `active`, and does Hermes send one welcome message on `chat_active`? Expected: yes. For demo hygiene, pin a specific line with `--line <line>` or `PLOW_CHAT_LINE=<line>`. ^v-live-chat
+7. **Optional live chat check.** Run `ref/scripts/create_plow_chat_curl.sh --scaffold ./hermes-agent`, text the printed activation message from iMessage to the printed phone number, and let the script poll. Does it report `verified`, write `PLOW_CHAT_TOKEN` and `PLOW_CHAT_CHAT_UID`, and does a normal iMessage reply reach Hermes after container start? Expected: yes. ^v-live-chat
 
 ## Open
 
@@ -114,6 +115,6 @@ The verbs performed by the Hermes-side objects. For Plow Chat actions (chat is c
 ## Non-Goals
 
 - This SEED does not document the Plow Chat API; see [[seed-plow-chat]]. ^ng-api
-- This SEED does not store or publish chat secrets, verification codes, phone numbers, or provider identities.
+- This SEED does not store or publish session tokens, activation codes, phone numbers, or provider identities in committed files.
 - This SEED does not require modifying Hermes core; a plugin-based adapter is the preferred shape when supported.
 - This SEED does not install or enable Hermes plugins through the Hermes CLI on the target path.

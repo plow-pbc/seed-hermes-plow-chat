@@ -60,44 +60,40 @@ terminal:
 
 ## Create and verify a Plow chat
 
-Use the curl-only host helper to create the chat, capture the one-time verify
-code, write `PLOW_CHAT_*` to the scaffold's `data/.env`, and poll status:
+Use the curl-only host helper to start Plow activation with `provision_chat=true`,
+capture the returned session token and chat uid after verification, and write
+`PLOW_CHAT_*` to the scaffold's `data/.env`:
 
 ```bash
 ref/scripts/create_plow_chat_curl.sh \
   --scaffold ./hermes-agent
 ```
 
-The script auto-discovers an available line with unauthenticated
-`GET /v1/lines`, uses the first returned line by default, and prints the
-instruction the user needs: `Text VERIFY-XXXXXX from iMessage to +1...`. It
-does not print the chat secret. Start Hermes with `docker compose up` before
-texting the code so the plugin is subscribed when Plow emits `chat_active`.
-
-For controlled demos, pin a specific line with `--line ln_...` or
-`PLOW_CHAT_LINE=ln_...` to avoid shared-line collisions. This override is
-optional; normal users should not supply or know a line uid.
+The script asks Plow to assign an available line and prints the instruction the
+user needs: `Text Plow Activate: ABCDE from iMessage to +1...`. It does not
+print the session token. Start Hermes with `docker compose up` after the script
+writes `.env`.
 
 The host poll uses:
 
 ```bash
 curl -fsSL \
-  -H "X-Chat-Secret-Key: <secret>" \
-  "https://chat.plow.co/v1/chats/<chat_uid>"
+  -H 'Content-Type: application/json' \
+  -d '{"activation_secret":"<secret>"}' \
+  "https://api.plow.co/v1/auth/activate/redeem"
 ```
 
-When the chat becomes `active`, the adapter sends exactly one welcome message
-from Hermes through the normal Plow message endpoint. Set
+If the adapter is connected when Plow emits `chat_active`, it sends exactly one
+welcome message from Hermes through the normal Plow message endpoint. Set
 `PLOW_CHAT_WELCOME_MESSAGE` to customize it or
 `PLOW_CHAT_AUTO_WELCOME=false` to disable it.
 
 ## Runtime behavior
 
 - `PLOW_CHAT_CHAT_UID` is the single Plow chat handled by this plugin instance.
-- `PLOW_CHAT_SECRET_KEY` stays in the scaffold's `data/.env`; do not commit it
+- `PLOW_CHAT_TOKEN` stays in the scaffold's `data/.env`; do not commit it
   or log it.
-- The adapter subscribes while the chat is still pending and sends the welcome
-  on the first `chat_active` frame only.
+- The adapter sends the welcome on the first `chat_active` frame it sees.
 - Inbound WebSocket frames with `direction=outbound` are ignored so Hermes does
   not answer itself.
 - The adapter best-effort approves verified Plow member ids in Hermes'

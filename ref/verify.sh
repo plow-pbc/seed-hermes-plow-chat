@@ -63,7 +63,7 @@ if [[ -e after-install.md || -e ref/scripts/bootstrap_fresh_hermes.sh || -e ref/
   echo 'old host installer artifact still exists' >&2
   exit 1
 fi
-if grep -rnE 'python3|git clone|hermes plugins|hermes gateway|GH[_]TOKEN|PLOW_CHAT_LINE_ID|--line-id' ref/scripts; then
+if grep -rnE 'python3|git clone|hermes plugins|hermes gateway|GH[_]TOKEN|PLOW_CHAT_LINE|--line' ref/scripts; then
   echo 'host scripts still reference Python/git/Hermes installer artifacts' >&2
   exit 1
 fi
@@ -81,22 +81,19 @@ cat >"$mockdir/bin/curl" <<'SH'
 set -euo pipefail
 url="${@: -1}"
 case "$url" in
-  */v1/lines)
-    printf '{"data":[{"uid":"ln_other","provider_key":"+10000000000"},{"uid":"ln_test","provider_key":"+15551234567"}]}\n'
+  */v1/auth/activate)
+    printf '{"display_code":"ABCDE","activation_secret":"act_test","send_to":"+15551234567","line_id":"ln_test"}\n'
     ;;
-  */v1/chats)
-    printf '{"participants":[{"type":"agent","uid":"agt_test"},{"type":"member","uid":"mem_test","verification_code":"VERIFY-XXXXXX"}],"uid":"cht_test","secret_key":"test_secret"}\n'
-    ;;
-  */v1/chats/cht_test)
+  */v1/auth/activate/redeem)
     count_file="${PLOW_FAKE_COUNT_FILE:?}"
     count=0
     [[ -f "$count_file" ]] && count="$(cat "$count_file")"
     count=$((count + 1))
     printf '%s' "$count" >"$count_file"
     if [[ "$count" -lt 2 ]]; then
-      printf '{"participants":[{"type":"member","status":"pending"}],"uid":"cht_test","status":"pending"}\n'
+      printf '{"status":"pending"}\n'
     else
-      printf '{"participants":[{"type":"member","status":"active"}],"uid":"cht_test","status":"active"}\n'
+      printf '{"status":"verified","token":"token_test","chat":{"uid":"cht_test","status":"active","participants":[{"type":"member","status":"active"}]}}\n'
     fi
     ;;
   *)
@@ -120,7 +117,11 @@ grep -q 'PLOW_CHAT_CHAT_UID=cht_test' "$mockdir/hermes-agent/data/.env" || {
   echo 'jq-less curl orchestration wrote wrong chat uid' >&2
   exit 1
 }
-grep -q 'Text VERIFY-XXXXXX from iMessage to +10000000000' "$mockdir/out.txt" || {
+grep -q 'PLOW_CHAT_TOKEN=token_test' "$mockdir/hermes-agent/data/.env" || {
+  echo 'jq-less curl orchestration wrote wrong token' >&2
+  exit 1
+}
+grep -q 'Text Plow Activate: ABCDE from iMessage to +15551234567' "$mockdir/out.txt" || {
   echo 'jq-less curl orchestration did not surface the selected line phone number' >&2
   exit 1
 }
@@ -169,11 +170,11 @@ for path in paths:
     files = [path] if path.is_file() else [p for p in path.rglob('*') if p.is_file()]
     for file in files:
         text = file.read_text(errors='ignore')
-        if re.search(r'sk_[A-Za-z0-9_-]{8,}', text):
-            bad.append(f'{file}: literal-looking chat secret')
-        for m in re.finditer(r'VERIFY-[A-Z0-9]{6}', text):
-            if m.group(0) != 'VERIFY-XXXXXX':
-                bad.append(f'{file}: literal-looking verification code')
+        if re.search(r'plow_[A-Za-z0-9-]{16,}', text):
+            bad.append(f'{file}: literal-looking session token')
+        for m in re.finditer(r'Plow Activate: ([A-Z0-9]{5,})', text):
+            if m.group(1) != 'ABCDE':
+                bad.append(f'{file}: literal-looking activation code')
 if bad:
     raise SystemExit('\n'.join(bad))
 PY
