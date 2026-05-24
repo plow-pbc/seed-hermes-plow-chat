@@ -12,14 +12,14 @@ requires_env:
     prompt: "Plow chat uid"
     secret: false
     password: false
-  - name: PLOW_CHAT_SECRET_KEY
-    description: "Per-chat secret key returned once by POST /v1/chats"
-    prompt: "Plow chat secret key"
+  - name: PLOW_CHAT_TOKEN
+    description: "Plow session Bearer token returned by activation redeem"
+    prompt: "Plow session token"
     secret: true
     password: true
 optional_env:
   - name: PLOW_CHAT_BASE_URL
-    description: "API base URL (default: https://chat.plow.co)"
+    description: "API base URL (default: https://api.plow.co)"
     prompt: "Plow Chat base URL"
     secret: false
     password: false

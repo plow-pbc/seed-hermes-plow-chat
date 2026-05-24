@@ -51,6 +51,7 @@ class BasePlatformAdapter:
 
 
 sys.modules.setdefault("gateway", types.ModuleType("gateway"))
+sys.modules.setdefault("aiohttp", types.ModuleType("aiohttp"))
 config_mod = types.ModuleType("gateway.config")
 config_mod.Platform = Platform
 sys.modules["gateway.config"] = config_mod
@@ -70,13 +71,13 @@ spec.loader.exec_module(adapter_mod)
 
 
 class DummyConfig:
-    extra = {"chat_uid": "cht_test", "secret_key": "sk_test"}
+    extra = {"chat_uid": "cht_test", "token": "token_test"}
 
 
 class RecordingAdapter(adapter_mod.PlowChatAdapter):
     def __init__(self, monkeypatch):
         monkeypatch.delenv("PLOW_CHAT_CHAT_UID", raising=False)
-        monkeypatch.delenv("PLOW_CHAT_SECRET_KEY", raising=False)
+        monkeypatch.delenv("PLOW_CHAT_TOKEN", raising=False)
         super().__init__(DummyConfig())
         self.sent = []
         self.handled = []
@@ -150,3 +151,91 @@ def test_inbound_message_auto_approves_verified_sender(monkeypatch):
 
     assert approved == [("plow_chat", "cp_member", "Patrick")]
     assert adapter.handled[0].source.user_id == "cp_member"
+
+
+class FakeResponse:
+    def __init__(self, payload, status=200):
+        self.payload = payload
+        self.status = status
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def json(self, content_type=None):
+        return self.payload
+
+
+class RecordingSession:
+    def __init__(self, payload=None, *, get_payload=None):
+        self.payload = payload or {}
+        self.get_payload = get_payload or {}
+        self.posts = []
+        self.gets = []
+
+    def post(self, url, **kwargs):
+        self.posts.append((url, kwargs))
+        return FakeResponse(self.payload)
+
+    def get(self, url, **kwargs):
+        self.gets.append((url, kwargs))
+        return FakeResponse(self.get_payload)
+
+
+def test_send_uses_bearer_token(monkeypatch):
+    adapter = RecordingAdapter(monkeypatch)
+    session = RecordingSession({"uid": "msg_1", "status": "sent"})
+    adapter._http_session = session
+
+    result = asyncio.run(adapter_mod.PlowChatAdapter.send(adapter, "cht_test", "hello"))
+
+    assert result.success is True
+    assert session.posts == [
+        (
+            "https://api.plow.co/v1/chats/cht_test/messages",
+            {
+                "json": {"body": "hello"},
+                "headers": {"Authorization": "Bearer token_test"},
+            },
+        )
+    ]
+
+
+def test_ws_ticket_is_scoped_to_chat_and_uses_bearer(monkeypatch):
+    adapter = RecordingAdapter(monkeypatch)
+    session = RecordingSession({"ticket": "wst_test"})
+    adapter._http_session = session
+
+    ticket = asyncio.run(adapter._mint_ws_ticket())
+
+    assert ticket == "wst_test"
+    assert session.posts == [
+        (
+            "https://api.plow.co/v1/ws/ticket",
+            {
+                "json": {"chat_id": "cht_test"},
+                "headers": {"Authorization": "Bearer token_test"},
+            },
+        )
+    ]
+
+
+def test_connected_active_chat_sends_welcome_once(monkeypatch):
+    monkeypatch.setenv("PLOW_CHAT_WELCOME_MESSAGE", "ready!")
+    adapter = RecordingAdapter(monkeypatch)
+    session = RecordingSession(get_payload={"uid": "cht_test", "status": "active"})
+    adapter._http_session = session
+
+    asyncio.run(adapter._handle_ws_frame({"type": "connected"}))
+    asyncio.run(adapter._handle_ws_frame({"type": "connected"}))
+    asyncio.run(adapter._handle_ws_frame({"type": "chat_active"}))
+
+    assert adapter.sent == [("cht_test", "ready!")]
+    assert session.gets == [
+        (
+            "https://api.plow.co/v1/chats/cht_test",
+            {"headers": {"Authorization": "Bearer token_test"}},
+        )
+    ]

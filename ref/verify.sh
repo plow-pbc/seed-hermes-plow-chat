@@ -63,7 +63,7 @@ if [[ -e after-install.md || -e ref/scripts/bootstrap_fresh_hermes.sh || -e ref/
   echo 'old host installer artifact still exists' >&2
   exit 1
 fi
-if grep -rnE 'python3|git clone|hermes plugins|hermes gateway|GH[_]TOKEN|PLOW_CHAT_LINE_ID|--line-id' ref/scripts; then
+if grep -rnE 'python3|git clone|hermes plugins|hermes gateway|GH[_]TOKEN|PLOW_CHAT_LINE|--line' ref/scripts; then
   echo 'host scripts still reference Python/git/Hermes installer artifacts' >&2
   exit 1
 fi
@@ -72,7 +72,7 @@ fi
 # keep jq out of PATH and verify optional missing fields do not abort parsing.
 mockdir="$(mktemp -d)"
 mkdir -p "$mockdir/bin" "$mockdir/hermes-agent"
-for cmd in bash tr grep head sed mktemp mkdir awk mv chmod date sleep dirname cat cp; do
+for cmd in bash tr grep head sed mktemp mkdir awk mv chmod date sleep dirname cat cp cut; do
   target="$(command -v "$cmd")"
   ln -s "$target" "$mockdir/bin/$cmd"
 done
@@ -81,23 +81,26 @@ cat >"$mockdir/bin/curl" <<'SH'
 set -euo pipefail
 url="${@: -1}"
 case "$url" in
-  */v1/lines)
-    printf '{"data":[{"uid":"ln_other","provider_key":"+10000000000"},{"uid":"ln_test","provider_key":"+15551234567"}]}\n'
+  */v1/auth/activate)
+    printf '{"display_code":"ABCDE","activation_secret":"act_test","send_to":"+15551234567","line_id":"ln_test"}\n'
     ;;
-  */v1/chats)
-    printf '{"participants":[{"type":"agent","uid":"agt_test"},{"type":"member","uid":"mem_test","verification_code":"VERIFY-XXXXXX"}],"uid":"cht_test","secret_key":"test_secret"}\n'
-    ;;
-  */v1/chats/cht_test)
+  */v1/auth/activate/redeem)
     count_file="${PLOW_FAKE_COUNT_FILE:?}"
     count=0
     [[ -f "$count_file" ]] && count="$(cat "$count_file")"
     count=$((count + 1))
     printf '%s' "$count" >"$count_file"
     if [[ "$count" -lt 2 ]]; then
-      printf '{"participants":[{"type":"member","status":"pending"}],"uid":"cht_test","status":"pending"}\n'
+      printf '{"status":"pending"}\n'
     else
-      printf '{"participants":[{"type":"member","status":"active"}],"uid":"cht_test","status":"active"}\n'
+      printf '{"status":"verified","token":"token_test","chat":{"uid":"cht_test","status":"active","participants":[{"type":"member","status":"active"}]}}\n'
     fi
+    ;;
+  */v1/auth/owner-identity)
+    printf '{"display_name":"Test Owner","phones":["+15551234567"],"emails":["owner@example.test"]}\n'
+    ;;
+  */v1/me/channels)
+    printf '{"channels":[{"provider":"linq","provider_key":"+15551234567"}]}\n'
     ;;
   *)
     echo "unexpected url: $url" >&2
@@ -120,7 +123,11 @@ grep -q 'PLOW_CHAT_CHAT_UID=cht_test' "$mockdir/hermes-agent/data/.env" || {
   echo 'jq-less curl orchestration wrote wrong chat uid' >&2
   exit 1
 }
-grep -q 'Text VERIFY-XXXXXX from iMessage to +10000000000' "$mockdir/out.txt" || {
+grep -q 'PLOW_CHAT_TOKEN=token_test' "$mockdir/hermes-agent/data/.env" || {
+  echo 'jq-less curl orchestration wrote wrong token' >&2
+  exit 1
+}
+grep -q 'Text Plow Activate: ABCDE from iMessage to +15551234567' "$mockdir/out.txt" || {
   echo 'jq-less curl orchestration did not surface the selected line phone number' >&2
   exit 1
 }
@@ -130,6 +137,30 @@ if [[ -e "$mockdir/hermes-agent/data/plow_chat_state.json" ]]; then
 fi
 if grep -q 'Code expires at:' "$mockdir/out.txt"; then
   echo 'jq-less curl orchestration surfaced missing optional expiry' >&2
+  exit 1
+fi
+if [[ ! -f "$mockdir/hermes-agent/data/.activation.json" ]]; then
+  echo 'curl orchestration did not write activation audit' >&2
+  exit 1
+fi
+grep -q '"activation_secret": "<redacted>"' "$mockdir/hermes-agent/data/.activation.json" || {
+  echo 'activation audit did not redact activation secret' >&2
+  exit 1
+}
+grep -q '"token_last4": "test"' "$mockdir/hermes-agent/data/.activation.json" || {
+  echo 'activation audit did not record token last four' >&2
+  exit 1
+}
+grep -q '"chat_uid": "cht_test"' "$mockdir/hermes-agent/data/.activation.json" || {
+  echo 'activation audit did not record chat uid' >&2
+  exit 1
+}
+grep -q '"owner_identity": {"display_name":"Test Owner","phones":\["+15551234567"\],"emails":\["owner@example.test"\]}' "$mockdir/hermes-agent/data/.activation.json" || {
+  echo 'activation audit did not record owner identity snapshot' >&2
+  exit 1
+}
+if grep -q 'act_test\|token_test' "$mockdir/hermes-agent/data/.activation.json"; then
+  echo 'activation audit leaked full activation secret or token' >&2
   exit 1
 fi
 
@@ -169,11 +200,11 @@ for path in paths:
     files = [path] if path.is_file() else [p for p in path.rglob('*') if p.is_file()]
     for file in files:
         text = file.read_text(errors='ignore')
-        if re.search(r'sk_[A-Za-z0-9_-]{8,}', text):
-            bad.append(f'{file}: literal-looking chat secret')
-        for m in re.finditer(r'VERIFY-[A-Z0-9]{6}', text):
-            if m.group(0) != 'VERIFY-XXXXXX':
-                bad.append(f'{file}: literal-looking verification code')
+        if re.search(r'plow_[A-Za-z0-9_-]{16,}', text):
+            bad.append(f'{file}: literal-looking session token')
+        for m in re.finditer(r'Plow Activate: ([A-Z0-9]{5,})', text):
+            if m.group(1) != 'ABCDE':
+                bad.append(f'{file}: literal-looking activation code')
 if bad:
     raise SystemExit('\n'.join(bad))
 PY

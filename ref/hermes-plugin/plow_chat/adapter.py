@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 from gateway.config import Platform
 from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageType, SendResult
 
-DEFAULT_BASE_URL = "https://chat.plow.co"
+DEFAULT_BASE_URL = "https://api.plow.co"
 MAX_MESSAGE_LENGTH = 4_000
 DEFAULT_WELCOME_MESSAGE = "Hi — Plow Chat is connected to Hermes now. Reply here to start chatting."
 
@@ -40,11 +40,12 @@ def _chat_uid_from_env_or_config(config) -> str:
     return (os.getenv("PLOW_CHAT_CHAT_UID") or extra.get("chat_uid") or "").strip()
 
 
-def _secret_from_env_or_config(config) -> str:
-    # Prefer env. Keeping secret in config.extra works for local experiments but
-    # is not recommended because config files are easier to accidentally commit.
+def _token_from_env_or_config(config) -> str:
+    # Prefer env. Keeping the token in config.extra works for local experiments
+    # but is not recommended because config files are easier to accidentally
+    # commit.
     extra = getattr(config, "extra", {}) or {}
-    return (os.getenv("PLOW_CHAT_SECRET_KEY") or extra.get("secret_key") or "").strip()
+    return (os.getenv("PLOW_CHAT_TOKEN") or extra.get("token") or "").strip()
 
 
 def _ws_url_for(base_url: str, ticket: str) -> str:
@@ -79,12 +80,13 @@ class PlowChatAdapter(BasePlatformAdapter):
         super().__init__(config=config, platform=Platform("plow_chat"))
         self.base_url = _base_url_from_env_or_config(config)
         self.chat_uid = _chat_uid_from_env_or_config(config)
-        self.secret_key = _secret_from_env_or_config(config)
+        self.token = _token_from_env_or_config(config)
         self._http_session = None
         self._ws_task: Optional[asyncio.Task] = None
         self._seen_message_uids: set[str] = set()
         self._stop_event = asyncio.Event()
         self._welcome_sent = False
+        self._checked_initial_chat_status = False
 
     @property
     def name(self) -> str:
@@ -93,8 +95,8 @@ class PlowChatAdapter(BasePlatformAdapter):
     async def connect(self) -> bool:
         import aiohttp
 
-        if not self.chat_uid or not self.secret_key:
-            msg = "PLOW_CHAT_CHAT_UID and PLOW_CHAT_SECRET_KEY are required"
+        if not self.chat_uid or not self.token:
+            msg = "PLOW_CHAT_CHAT_UID and PLOW_CHAT_TOKEN are required"
             logger.error("[plow_chat] %s", msg)
             self._set_fatal_error("config_missing", msg, retryable=False)
             return False
@@ -144,7 +146,7 @@ class PlowChatAdapter(BasePlatformAdapter):
                 async with session.post(
                     f"{self.base_url}/v1/chats/{self.chat_uid}/messages",
                     json={"body": chunk},
-                    headers={"X-Chat-Secret-Key": self.secret_key},
+                    headers={"Authorization": f"Bearer {self.token}"},
                 ) as resp:
                     data = await resp.json(content_type=None)
                     if resp.status >= 400:
@@ -171,7 +173,8 @@ class PlowChatAdapter(BasePlatformAdapter):
     async def _mint_ws_ticket(self) -> str:
         async with self._http_session.post(
             f"{self.base_url}/v1/ws/ticket",
-            headers={"X-Chat-Secret-Key": self.secret_key},
+            json={"chat_id": self.chat_uid},
+            headers={"Authorization": f"Bearer {self.token}"},
         ) as resp:
             data = await resp.json(content_type=None)
             if resp.status >= 400:
@@ -211,6 +214,7 @@ class PlowChatAdapter(BasePlatformAdapter):
         if frame_type == "connected":
             self._mark_connected()
             logger.info("[plow_chat] websocket subscribed")
+            await self._send_welcome_if_chat_already_active()
             return
         if frame_type == "chat_active":
             logger.info("[plow_chat] chat active")
@@ -284,6 +288,26 @@ class PlowChatAdapter(BasePlatformAdapter):
         else:
             logger.warning("[plow_chat] activation welcome send failed: %s", result.error)
 
+    async def _send_welcome_if_chat_already_active(self) -> None:
+        if self._checked_initial_chat_status:
+            return
+        self._checked_initial_chat_status = True
+        try:
+            async with self._http_session.get(
+                f"{self.base_url}/v1/chats/{self.chat_uid}",
+                headers={"Authorization": f"Bearer {self.token}"},
+            ) as resp:
+                data = await resp.json(content_type=None)
+                if resp.status >= 400:
+                    err = data.get("error", {}) if isinstance(data, dict) else {}
+                    logger.warning("[plow_chat] initial chat status check failed: %s", err.get("message") or resp.status)
+                    return
+        except Exception as exc:
+            logger.warning("[plow_chat] initial chat status check failed: %s", exc)
+            return
+        if isinstance(data, dict) and data.get("status") == "active":
+            await self._send_activation_welcome()
+
     def _approve_sender_from_frame(self, frame: dict[str, Any]) -> None:
         """Best-effort approval from activation/verification frames."""
         candidates = []
@@ -304,7 +328,7 @@ class PlowChatAdapter(BasePlatformAdapter):
     def _approve_plow_member(self, user_id: str, user_name: str = "") -> None:
         """Best-effort DM pairing approval for the verified Plow member.
 
-        Plow already gates this chat by verification and per-chat secret. Hermes
+        Plow already gates this chat by verification and Bearer auth. Hermes
         pairing is an additional generic gateway layer; approving the member uid
         here prevents the first real user message from being replaced by an
         unrelated pairing-code prompt.
@@ -332,7 +356,7 @@ def check_requirements() -> bool:
         import aiohttp  # noqa: F401
     except ImportError:
         return False
-    return bool(os.getenv("PLOW_CHAT_CHAT_UID") and os.getenv("PLOW_CHAT_SECRET_KEY"))
+    return bool(os.getenv("PLOW_CHAT_CHAT_UID") and os.getenv("PLOW_CHAT_TOKEN"))
 
 
 def validate_config(config) -> bool:
@@ -340,7 +364,7 @@ def validate_config(config) -> bool:
         import aiohttp  # noqa: F401
     except ImportError:
         return False
-    return bool(_chat_uid_from_env_or_config(config) and _secret_from_env_or_config(config))
+    return bool(_chat_uid_from_env_or_config(config) and _token_from_env_or_config(config))
 
 
 def is_connected(config) -> bool:
@@ -349,8 +373,8 @@ def is_connected(config) -> bool:
 
 def _env_enablement() -> dict | None:
     chat_uid = os.getenv("PLOW_CHAT_CHAT_UID", "").strip()
-    secret = os.getenv("PLOW_CHAT_SECRET_KEY", "").strip()
-    if not (chat_uid and secret):
+    token = os.getenv("PLOW_CHAT_TOKEN", "").strip()
+    if not (chat_uid and token):
         return None
     seed = {
         "base_url": os.getenv("PLOW_CHAT_BASE_URL", DEFAULT_BASE_URL).strip() or DEFAULT_BASE_URL,
@@ -379,7 +403,7 @@ def register(ctx):
         check_fn=check_requirements,
         validate_config=validate_config,
         is_connected=is_connected,
-        required_env=["PLOW_CHAT_CHAT_UID", "PLOW_CHAT_SECRET_KEY"],
+        required_env=["PLOW_CHAT_CHAT_UID", "PLOW_CHAT_TOKEN"],
         install_hint="Create and verify a Plow chat, then set PLOW_CHAT_* in Hermes data/.env",
         env_enablement_fn=_env_enablement,
         cron_deliver_env_var="PLOW_CHAT_HOME_CHANNEL",
