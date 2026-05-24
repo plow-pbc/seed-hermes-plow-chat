@@ -7,7 +7,6 @@ DATA_DIR="${HERMES_DATA_DIR:-}"
 DISPLAY_NAME="${PLOW_CHAT_DISPLAY_NAME:-Hermes user}"
 TIMEOUT_SECONDS="${PLOW_CHAT_VERIFY_TIMEOUT:-900}"
 POLL_INTERVAL="${PLOW_CHAT_VERIFY_POLL_INTERVAL:-5}"
-POLL=1
 
 usage() {
   cat <<'EOF'
@@ -24,7 +23,6 @@ Options:
   --display-name NAME   Session display name, default "Hermes user"
   --timeout SECONDS     Poll timeout, default 900
   --interval SECONDS    Poll interval, default 5
-  --no-poll             Start activation, print instructions, then exit
 
 Environment overrides:
   HERMES_SCAFFOLD_DIR
@@ -44,7 +42,6 @@ while [[ $# -gt 0 ]]; do
     --display-name) DISPLAY_NAME="$2"; shift 2 ;;
     --timeout) TIMEOUT_SECONDS="$2"; shift 2 ;;
     --interval) POLL_INTERVAL="$2"; shift 2 ;;
-    --no-poll) POLL=0; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -149,18 +146,14 @@ fi
 echo "Text Plow Activate: ${DISPLAY_CODE} from iMessage to ${SEND_TO}"
 echo
 
-if [[ "$POLL" != "1" ]]; then
-  echo "Activation is not complete yet; rerun with polling to write PLOW_CHAT_* after the text is sent."
-  exit 0
-fi
-
 echo "Polling activation redeem until verified..."
 deadline=$(( $(date +%s) + TIMEOUT_SECONDS ))
 last_status=""
 while [[ "$(date +%s)" -lt "$deadline" ]]; do
-  REDEEM_JSON="$(curl -fsSL \
+  REDEEM_PAYLOAD="$(printf '{"activation_secret":"%s"}' "$(json_escape "$ACTIVATION_SECRET")")"
+  REDEEM_JSON="$(printf '%s' "$REDEEM_PAYLOAD" | curl -fsSL \
     -H 'Content-Type: application/json' \
-    -d "$(printf '{"activation_secret":"%s"}' "$(json_escape "$ACTIVATION_SECRET")")" \
+    -d @- \
     "${BASE_URL}/v1/auth/activate/redeem")"
   STATUS="$(json_value "$REDEEM_JSON" '.status' 'status')"
   if [[ "$STATUS" != "$last_status" ]]; then

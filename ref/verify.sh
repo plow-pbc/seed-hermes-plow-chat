@@ -170,7 +170,7 @@ for path in paths:
     files = [path] if path.is_file() else [p for p in path.rglob('*') if p.is_file()]
     for file in files:
         text = file.read_text(errors='ignore')
-        if re.search(r'plow_[A-Za-z0-9-]{16,}', text):
+        if re.search(r'plow_[A-Za-z0-9_-]{16,}', text):
             bad.append(f'{file}: literal-looking session token')
         for m in re.finditer(r'Plow Activate: ([A-Z0-9]{5,})', text):
             if m.group(1) != 'ABCDE':
