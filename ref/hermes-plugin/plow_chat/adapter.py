@@ -101,7 +101,11 @@ class PlowChatAdapter(BasePlatformAdapter):
             self._set_fatal_error("config_missing", msg, retryable=False)
             return False
 
-        self._http_session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
+        # NOTE: shared session retained for the WSS loop only. The send() method
+        # below creates a per-call session to avoid cross-event-loop "Timeout
+        # context manager should be used inside a task" errors when the boss
+        # skill invokes send_message from a tool-call context.
+        self._http_session = aiohttp.ClientSession()
         self._stop_event.clear()
         self._ws_task = asyncio.create_task(self._websocket_loop())
         return True
@@ -138,8 +142,13 @@ class PlowChatAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="empty message")
 
         chunks = self.truncate_message(body)
-        session = self._http_session or aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
-        close_session = self._http_session is None
+        # Per-call session. Sharing self._http_session across calls works for the
+        # WSS loop (same event loop) but fails when send() is invoked from the
+        # boss skill's tool-call context (different asyncio task), producing
+        # "Timeout context manager should be used inside a task" errors. The cost
+        # of a fresh session per send is negligible (~1ms) and eliminates the bug.
+        session = aiohttp.ClientSession()
+        close_session = True
         last_message_id = None
         try:
             for chunk in chunks:
