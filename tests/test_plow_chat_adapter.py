@@ -168,10 +168,20 @@ class FakeResponse:
         return self.payload
 
 
+class RaisingContext:
+    async def __aenter__(self):
+        raise RuntimeError("temporary status failure")
+
+    async def __aexit__(self, *args):
+        return False
+
+
 class RecordingSession:
-    def __init__(self, payload=None, *, get_payload=None):
+    def __init__(self, payload=None, *, get_payload=None, get_status=200, get_sequence=None):
         self.payload = payload or {}
         self.get_payload = get_payload or {}
+        self.get_status = get_status
+        self.get_sequence = list(get_sequence or [])
         self.posts = []
         self.gets = []
 
@@ -181,7 +191,13 @@ class RecordingSession:
 
     def get(self, url, **kwargs):
         self.gets.append((url, kwargs))
-        return FakeResponse(self.get_payload)
+        if self.get_sequence:
+            item = self.get_sequence.pop(0)
+            if isinstance(item, BaseException):
+                return RaisingContext()
+            payload, status = item
+            return FakeResponse(payload, status=status)
+        return FakeResponse(self.get_payload, status=self.get_status)
 
 
 def test_send_uses_bearer_token(monkeypatch):
@@ -239,3 +255,26 @@ def test_connected_active_chat_sends_welcome_once(monkeypatch):
             {"headers": {"Authorization": "Bearer token_test"}},
         )
     ]
+
+
+def test_active_chat_welcome_retries_after_status_failure(monkeypatch):
+    monkeypatch.setenv("PLOW_CHAT_WELCOME_MESSAGE", "ready!")
+    adapter = RecordingAdapter(monkeypatch)
+    session = RecordingSession(
+        get_sequence=[
+            RuntimeError("temporary status failure"),
+            ({"uid": "cht_test", "status": "active"}, 200),
+            ({"uid": "cht_test", "status": "active"}, 200),
+        ]
+    )
+    adapter._http_session = session
+
+    asyncio.run(adapter._handle_ws_frame({"type": "connected"}))
+    assert adapter.sent == []
+
+    asyncio.run(adapter._handle_ws_frame({"type": "connected"}))
+    assert adapter.sent == [("cht_test", "ready!")]
+
+    asyncio.run(adapter._handle_ws_frame({"type": "connected"}))
+    assert adapter.sent == [("cht_test", "ready!")]
+    assert len(session.gets) == 2

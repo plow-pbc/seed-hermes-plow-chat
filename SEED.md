@@ -88,7 +88,7 @@ The verbs performed by the Hermes-side objects. For Plow Chat actions (chat is c
 ### plow_chat handles status and activation frames
 
 - The adapter MAY log `message_status_updated` frames for outbound delivery transitions. ^act-status
-- If Plow emits `chat_active` while the adapter is connected, the adapter SHOULD send exactly one setup-success welcome message through the normal Plow message endpoint. ^act-activation-welcome
+- If Plow emits `chat_active` while the adapter is connected, or if the adapter first connects to an already-active chat, the adapter SHOULD send exactly one setup-success welcome message through the normal Plow message endpoint. ^act-activation-welcome
 - The adapter SHOULD surface `chat_activation_failed` as a fatal setup error, because recovery is delete and recreate.
 - The adapter SHOULD mark the platform connected only after the WebSocket's initial `connected` frame.
 

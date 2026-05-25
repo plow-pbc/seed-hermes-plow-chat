@@ -29,7 +29,7 @@ optional_env:
     secret: false
     password: false
   - name: PLOW_CHAT_WELCOME_MESSAGE
-    description: "Optional setup-success message sent once when Plow emits chat_active"
+    description: "Optional setup-success message sent once on chat_active or first connect to an active chat"
     prompt: "Welcome message"
     secret: false
     password: false

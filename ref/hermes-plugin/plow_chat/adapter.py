@@ -86,7 +86,6 @@ class PlowChatAdapter(BasePlatformAdapter):
         self._seen_message_uids: set[str] = set()
         self._stop_event = asyncio.Event()
         self._welcome_sent = False
-        self._checked_initial_chat_status = False
 
     @property
     def name(self) -> str:
@@ -271,11 +270,10 @@ class PlowChatAdapter(BasePlatformAdapter):
     async def _send_activation_welcome(self) -> None:
         """Send one setup-success message after Plow reports activation.
 
-        The WebSocket can be connected while the chat is still pending. When
-        the user texts the verification code, Plow emits ``chat_active``; at
-        that point sends no longer return ``chat_not_ready`` and the user should
-        get an immediate confirmation instead of wondering whether setup
-        worked.
+        The WebSocket can be connected while the chat is still pending; Plow
+        emits ``chat_active`` after the user texts the verification code. The
+        adapter may also first connect after activation already completed, so
+        connected-status reconciliation uses the same welcome path.
         """
         if self._welcome_sent or not _auto_welcome_enabled():
             return
@@ -289,9 +287,8 @@ class PlowChatAdapter(BasePlatformAdapter):
             logger.warning("[plow_chat] activation welcome send failed: %s", result.error)
 
     async def _send_welcome_if_chat_already_active(self) -> None:
-        if self._checked_initial_chat_status:
+        if self._welcome_sent:
             return
-        self._checked_initial_chat_status = True
         try:
             async with self._http_session.get(
                 f"{self.base_url}/v1/chats/{self.chat_uid}",
