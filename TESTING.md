@@ -78,3 +78,38 @@ Expected Hermes evidence:
 
 If the poll times out, start activation again. Common causes are the code
 expiring, texting from the wrong messaging identity, or texting the wrong line.
+If the code expires mid-poll, Plow returns HTTP 410 and the helper prints
+`Activation code expired.` plus the exact re-run command, then exits non-zero —
+just run the command again for a fresh code.
+
+## Per-profile activation
+
+For a multi-profile install, activate each profile into its own
+`data/profiles/<name>/.env` with `--profile`:
+
+```bash
+ref/scripts/create_plow_chat_curl.sh --scaffold ./hermes-agent --profile daniel
+ref/scripts/create_plow_chat_curl.sh --scaffold ./hermes-agent --profile daniel-team
+```
+
+Each run prints `Profile <name> activated. Wrote PLOW_CHAT_CHAT_UID +
+PLOW_CHAT_TOKEN to <path>.` on success. Confirm with:
+
+```bash
+grep -E 'PLOW_CHAT_(CHAT_UID|TOKEN)' hermes-agent/data/profiles/daniel/.env
+```
+
+## Non-interactive test mode (DinD/CI)
+
+Phase 4 normally needs a human texting the code from the target iPhone, which a
+headless DinD/CI run cannot do. For test validation only, `--test-mode` writes
+operator-supplied credentials to the profile `.env` and skips the phone-bind
+dance entirely (it never contacts Plow):
+
+```bash
+ref/scripts/create_plow_chat_curl.sh --scaffold ./hermes-agent --profile daniel \
+  --test-mode --test-chat-uid cht_known --test-token tok_known
+```
+
+The audit file records `"status": "test-mode"`. Never use this for a real
+operator install.
