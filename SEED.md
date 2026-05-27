@@ -44,7 +44,8 @@ The named entities that exist on the Hermes side. For Plow Chat entities (chats,
 ### Host orchestration scripts
 
 - `ref/scripts/install_direct_mount.sh` is the canonical curl/shell installer for this gateway. It targets a seed-hermes scaffold with `--scaffold <dir>` (default `./hermes-agent`) or an explicit `--data-dir <dir>`, places the required plugin file set under `data/plugins/plow-chat-platform/`, enables `plow-chat-platform` in `data/config.yaml`, and supports `PLOW_CHAT_PLUGIN_LOCAL_DIR` and `PLOW_CHAT_PLUGIN_REF` source overrides. ^obj-direct-install-script
-- `ref/scripts/create_plow_chat_curl.sh` is a curl/shell helper that targets the same scaffold with `--scaffold <dir>` or `--data-dir <dir>`, starts Plow activation with `provision_chat=true`, prints the one-time activation message, writes `PLOW_CHAT_*` to `data/.env`, and polls activation redeem until verified or timeout. ^obj-curl-chat-script
+- `ref/scripts/create_plow_chat_curl.sh` is a curl/shell helper that targets the same scaffold with `--scaffold <dir>`, `--profile <name>`, or `--data-dir <dir>`, starts Plow activation with `provision_chat=true`, prints the one-time activation message, writes `PLOW_CHAT_*` to the target profile's `.env`, and polls activation redeem until verified or timeout. ^obj-curl-chat-script
+- The helper MUST resolve its target data dir as follows, highest precedence first: an explicit `--data-dir <dir>`; else `--profile <name>` (or `PLOW_CHAT_PROFILE`) resolving to `<scaffold>/data/profiles/<name>`; else the scaffold's `data/`. This MUST match the per-profile `.env` files that downstream install verification reads. ^obj-curl-profile-resolution
 
 ## Actions
 
@@ -60,17 +61,21 @@ The verbs performed by the Hermes-side objects. For Plow Chat actions (chat is c
 
 ### plow_chat is configured with Plow chat credentials
 
-- A host agent MUST run `ref/scripts/create_plow_chat_curl.sh --scaffold <seed-hermes-scaffold>` before first Hermes boot for this gateway and write these values into `data/.env`: `PLOW_CHAT_BASE_URL`, `PLOW_CHAT_CHAT_UID`, `PLOW_CHAT_TOKEN`, and `PLOW_CHAT_HOME_CHANNEL`. ^act-write-env
+- A host agent MUST run `ref/scripts/create_plow_chat_curl.sh --scaffold <seed-hermes-scaffold>` (optionally with `--profile <name>`) before first Hermes boot for this gateway and write these values into the resolved profile `.env` (`data/.env`, or `data/profiles/<name>/.env`): `PLOW_CHAT_BASE_URL`, `PLOW_CHAT_CHAT_UID`, `PLOW_CHAT_TOKEN`, and `PLOW_CHAT_HOME_CHANNEL`. ^act-write-env
+- On successful verification the helper MUST print a confirmation that names the profile and the exact env file written, e.g. `Profile <name> activated. Wrote PLOW_CHAT_CHAT_UID + PLOW_CHAT_TOKEN to <path>.`, so an operator can confirm Phase 4 succeeded without inspecting the env file. ^act-success-message
+- Before writing, the helper MUST (re-)ensure the target data dir is writable, because seed-hermes prepare.sh and the running container can churn ownership/mode on the bind-mounted `data/` tree. If the env file cannot be written, the helper MUST exit non-zero with an actionable error (the unwritable path plus a remediation command); it MUST NOT silently skip the write. ^act-write-permissions
 - The session token MUST be configured through `PLOW_CHAT_TOKEN`; it MUST NOT be committed, printed in logs, or placed in `config.yaml`. The shortcut activation returns a user-wide Bearer token that can read user identity surfaces such as `/v1/auth/owner-identity` and `/v1/me/channels`; treat it as a user credential, not a per-chat secret. `data/.env` MUST be mode `600` where the host filesystem supports it. ^act-secret-env
 - When `PLOW_CHAT_CHAT_UID` and `PLOW_CHAT_TOKEN` are present, the plugin's `env_enablement_fn` SHOULD auto-enable `gateway.platforms.plow_chat` and set its home channel to the Plow chat uid. ^act-env-auto-enable
 
 ### Host creates and polls Plow chat with curl
 
 - The host flow MUST call `POST /v1/auth/activate` with `provision_chat=true`, capture `activation_secret`, and surface `Plow Activate: <display_code>` plus `send_to` to the human. ^act-curl-create
-- The host flow MUST poll `POST /v1/auth/activate/redeem` with `{"activation_secret":"..."}` until redeem returns `status:"verified"` or a local timeout expires. ^act-curl-poll
+- The host flow MUST poll `POST /v1/auth/activate/redeem` with `{"activation_secret":"..."}` until redeem returns `status:"verified"` or a local timeout expires. The poll MUST capture the HTTP status without aborting on non-2xx, so an expired or gone activation does not surface as a raw `curl` transport error. ^act-curl-poll
+- When redeem returns HTTP 410 (the activation code expired), the helper MUST print a human-readable explanation and the exact command to re-run for a fresh code, then exit non-zero. It MUST NOT surface only the raw `curl: (22) ... 410` error. ^act-curl-expiry
 - The host flow MUST write the verified redeem `token` and embedded `chat.uid` into the scaffold env as `PLOW_CHAT_TOKEN` and `PLOW_CHAT_CHAT_UID`.
 - The host flow MUST write `data/.activation.json` with mode `600` for audit: activation metadata with `activation_secret` redacted, token last four only, chat uid, line/send-to metadata, and owner/channel snapshots fetched with the verified Bearer token. ^act-activation-audit
-- The timeout path MUST tell the operator that the activation may not have arrived or the code may have expired; recovery is to start activation again. ^act-timeout
+- The timeout path MUST tell the operator that the activation may not have arrived or the code may have expired, and SHOULD print the exact command to re-run; recovery is to start activation again. ^act-timeout
+- Phase 4 verification depends on an external human texting the activation code from the target iPhone, which cannot complete in a headless DinD/CI environment. The helper MAY provide a `--test-mode` that, given operator-supplied `--test-chat-uid`/`--test-token` (or `PLOW_CHAT_TEST_CHAT_UID`/`PLOW_CHAT_TEST_TOKEN`), skips the phone-bind dance and writes those values to the profile `.env`. Test mode MUST NOT contact Plow, MUST record `status:"test-mode"` in the audit file, and is for test validation only — not for real operator activation. ^act-test-mode
 
 ### plow_chat sends a Hermes response
 
