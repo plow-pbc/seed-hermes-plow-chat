@@ -79,13 +79,13 @@ The verbs performed by the Hermes-side objects. For Plow Chat actions (chat is c
 
 ### plow_chat sends a Hermes response
 
-- The platform adapter implements the Plow Chat [Message is sent](https://github.com/plow-pbc/seed-plow-chat/blob/main/SEED.md#actions) action against the configured chat.
+- The platform adapter implements the Plow Chat [Message is sent](https://github.com/plow-pbc/seed-plow-chat/blob/main/SEED.md#message-is-sent) action against the configured chat.
 - The adapter SHOULD strip or flatten rich markdown because the current backing channel is iMessage/SMS-style chat.
 - The adapter MUST treat 409 `chat_not_ready` as a setup/verification problem, not a successful send.
 
 ### plow_chat receives a user message
 
-- The adapter implements the Plow Chat ["WebSocket subscription is opened" and "Message is received"](https://github.com/plow-pbc/seed-plow-chat/blob/main/SEED.md#actions) actions.
+- The adapter implements the Plow Chat [WebSocket subscription is opened](https://github.com/plow-pbc/seed-plow-chat/blob/main/SEED.md#websocket-subscription-is-opened) and [Message is received](https://github.com/plow-pbc/seed-plow-chat/blob/main/SEED.md#message-is-received) actions.
 - For inbound frames, the adapter constructs a Hermes `MessageEvent` with the message body, Plow message uid, chat uid, and member sender uid/name.
 - Before dispatching an inbound member message into Hermes, the adapter SHOULD best-effort approve that member uid in Hermes' `plow_chat` pairing store so the verified Plow participant does not hit a second generic DM pairing flow.
 - On disconnect, the adapter SHOULD reconnect by minting a fresh ticket and SHOULD backfill missed messages with `GET /v1/chats/{chat_uid}/messages`.
