@@ -1,45 +1,28 @@
 #!/usr/bin/env python3
-"""Plow connectors helper for Hermes.
+"""Plow connectors helper for Hermes — generic wrapper over the Plow connector
+REST API. See `SKILL.md` for the action reference and examples.
 
-A thin, generic wrapper over the Plow connector REST API
-(``https://api.plow.co/v1/connectors/<connector>/<action>``). It lets a Hermes
-agent use the owner's Plow-connected Google (Gmail + Google Calendar) and Slack
-accounts with the **same** user Bearer token the ``plow_chat`` gateway already
-holds — so adding Google/Slack is zero new credentials.
-
-The Plow connector surface is uniform: ``status`` is a GET, and every other
-action is a POST whose JSON body is the request. This wrapper is therefore a
-single generic call rather than one function per endpoint.
-
-Usage::
-
-    plow_connector.py <connector> <action> [json_body]
-
-    plow_connector.py gmail status
-    plow_connector.py gmail messages.list '{"query":"is:unread","max_results":5}'
-    plow_connector.py gmail messages.send '{"to":["a@b.com"],"subject":"Hi","body":"...","account":"me@example.com"}'
-    plow_connector.py gmail calendar.events.list '{"time_min":"2026-06-14T00:00:00Z","max_results":10}'
-    plow_connector.py slack channels.list '{"account":"T0123"}'
-    plow_connector.py slack messages.send '{"account":"T0123","channel_id":"C0123","text":"hello"}'
-
-Auth/env (reuses the plow_chat gateway settings; define nothing new):
-
-    PLOW_CONNECTOR_TOKEN or PLOW_CHAT_TOKEN        user Bearer token (required)
-    PLOW_CONNECTOR_BASE_URL or PLOW_CHAT_BASE_URL  API base (default https://api.plow.co)
-
-Prints the JSON response to stdout. A non-2xx response is fatal: the status and
-body go to stderr and the process exits non-zero (no silent failures).
+`status` is a GET; every other action is a POST whose JSON body is the request.
+Auth reuses the gateway's user Bearer token (`PLOW_CONNECTOR_TOKEN` else
+`PLOW_CHAT_TOKEN`) against `PLOW_CHAT_BASE_URL` (default https://api.plow.co). A
+non-2xx response is fatal: status + body to stderr, non-zero exit.
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
 
 CONNECTORS = ("gmail", "slack")
 GET_ACTIONS = {"status"}
+# A single connector action token (e.g. `status`, `messages.list`,
+# `calendar.events.list`, `connect-code`). Rejecting anything else stops a
+# prompted agent from smuggling `/`, `?`, or `..` into the URL path and reaching
+# arbitrary bearer-authenticated Plow API routes through this helper.
+ACTION_RE = re.compile(r"^[a-z0-9]+([._-][a-z0-9]+)*$")
 
 
 def _env(*names: str, default: str | None = None) -> str | None:
@@ -53,11 +36,13 @@ def _env(*names: str, default: str | None = None) -> str | None:
 def call(connector: str, action: str, body: str = "") -> str:
     if connector not in CONNECTORS:
         raise SystemExit(f"unknown connector {connector!r}; expected one of {', '.join(CONNECTORS)}")
+    if not ACTION_RE.match(action):
+        raise SystemExit(f"invalid action {action!r}; must be a single connector action token")
 
     token = _env("PLOW_CONNECTOR_TOKEN", "PLOW_CHAT_TOKEN")
     if not token:
         raise SystemExit("PLOW_CONNECTOR_TOKEN or PLOW_CHAT_TOKEN is required")
-    base = _env("PLOW_CONNECTOR_BASE_URL", "PLOW_CHAT_BASE_URL", default="https://api.plow.co").rstrip("/")
+    base = _env("PLOW_CHAT_BASE_URL", default="https://api.plow.co").rstrip("/")
 
     method = "GET" if action in GET_ACTIONS else "POST"
     headers = {"Authorization": f"Bearer {token}"}

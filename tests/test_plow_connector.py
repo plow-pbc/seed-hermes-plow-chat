@@ -60,47 +60,82 @@ def captured(monkeypatch, mod):
     return seen
 
 
-def test_status_is_a_get_with_no_body(monkeypatch, mod, captured):
-    monkeypatch.setenv("PLOW_CHAT_TOKEN", "tok-abc")
-    monkeypatch.delenv("PLOW_CONNECTOR_TOKEN", raising=False)
-    monkeypatch.setenv("PLOW_CHAT_BASE_URL", "https://api.plow.co")
-
-    out = mod.call("gmail", "status")
-
-    assert json.loads(out) == {"ok": True}
-    assert captured["method"] == "GET"
-    assert captured["url"] == "https://api.plow.co/v1/connectors/gmail/status"
-    assert captured["headers"]["authorization"] == "Bearer tok-abc"
-    assert captured["body"] is None
+def _clear_env(monkeypatch):
+    for k in ("PLOW_CHAT_TOKEN", "PLOW_CONNECTOR_TOKEN", "PLOW_CHAT_BASE_URL"):
+        monkeypatch.delenv(k, raising=False)
 
 
-def test_action_posts_json_body(monkeypatch, mod, captured):
-    monkeypatch.setenv("PLOW_CHAT_TOKEN", "tok-abc")
-    mod.call("slack", "messages.send", '{"account":"T1","channel_id":"C1","text":"hi"}')
+@pytest.mark.parametrize(
+    "env, args, expected",
+    [
+        pytest.param(
+            {"PLOW_CHAT_TOKEN": "tok-abc"},
+            ("gmail", "status"),
+            {"method": "GET", "url": "https://api.plow.co/v1/connectors/gmail/status",
+             "auth": "Bearer tok-abc", "body": None, "content_type": None},
+            id="status-get-no-body",
+        ),
+        pytest.param(
+            {"PLOW_CHAT_TOKEN": "tok-abc"},
+            ("slack", "messages.send", '{"account":"T1","channel_id":"C1","text":"hi"}'),
+            {"method": "POST", "url": "https://api.plow.co/v1/connectors/slack/messages.send",
+             "auth": "Bearer tok-abc", "json": {"account": "T1", "channel_id": "C1", "text": "hi"},
+             "content_type": "application/json"},
+            id="action-post-json-body",
+        ),
+        pytest.param(
+            {"PLOW_CHAT_TOKEN": "chat-tok", "PLOW_CONNECTOR_TOKEN": "conn-tok"},
+            ("gmail", "status"),
+            {"method": "GET", "auth": "Bearer conn-tok"},
+            id="connector-token-overrides-chat-token",
+        ),
+    ],
+)
+def test_request_shape(monkeypatch, mod, captured, env, args, expected):
+    _clear_env(monkeypatch)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
 
-    assert captured["method"] == "POST"
-    assert captured["url"] == "https://api.plow.co/v1/connectors/slack/messages.send"
-    assert json.loads(captured["body"]) == {"account": "T1", "channel_id": "C1", "text": "hi"}
-    assert captured["headers"]["content-type"] == "application/json"
+    mod.call(*args)
+
+    if "method" in expected:
+        assert captured["method"] == expected["method"]
+    if "url" in expected:
+        assert captured["url"] == expected["url"]
+    if "auth" in expected:
+        assert captured["headers"]["authorization"] == expected["auth"]
+    if "json" in expected:
+        assert json.loads(captured["body"]) == expected["json"]
+    if "body" in expected:
+        assert captured["body"] == expected["body"]
+    if "content_type" in expected:
+        assert captured["headers"].get("content-type") == expected["content_type"]
 
 
-def test_connector_token_overrides_chat_token(monkeypatch, mod, captured):
-    monkeypatch.setenv("PLOW_CHAT_TOKEN", "chat-tok")
-    monkeypatch.setenv("PLOW_CONNECTOR_TOKEN", "conn-tok")
-    mod.call("gmail", "status")
-    assert captured["headers"]["authorization"] == "Bearer conn-tok"
-
-
-def test_base_url_override_and_default(monkeypatch, mod, captured):
+def test_base_url_default_and_chat_override(monkeypatch, mod, captured):
+    _clear_env(monkeypatch)
     monkeypatch.setenv("PLOW_CHAT_TOKEN", "t")
-    monkeypatch.delenv("PLOW_CHAT_BASE_URL", raising=False)
-    monkeypatch.delenv("PLOW_CONNECTOR_BASE_URL", raising=False)
     mod.call("gmail", "status")
-    assert captured["url"].startswith("https://api.plow.co/")
+    assert captured["url"] == "https://api.plow.co/v1/connectors/gmail/status"
 
-    monkeypatch.setenv("PLOW_CONNECTOR_BASE_URL", "https://example.test/")
+    monkeypatch.setenv("PLOW_CHAT_BASE_URL", "https://example.test/")
     mod.call("gmail", "status")
     assert captured["url"] == "https://example.test/v1/connectors/gmail/status"
+
+
+@pytest.mark.parametrize("action", ["status", "messages.list", "calendar.events.list", "messages.modify-labels", "connect-code"])
+def test_real_actions_accepted(monkeypatch, mod, captured, action):
+    monkeypatch.setenv("PLOW_CHAT_TOKEN", "t")
+    mod.call("gmail", action)
+    assert captured["url"].endswith(f"/{action}")
+
+
+@pytest.mark.parametrize("action", ["messages/list", "..", "a?b=1", "/v1/me", "messages..list", ""])
+def test_url_escaping_action_is_rejected(monkeypatch, mod, action):
+    # A prompted agent must not be able to smuggle / ? or .. into the URL path.
+    monkeypatch.setenv("PLOW_CHAT_TOKEN", "t")
+    with pytest.raises(SystemExit):
+        mod.call("gmail", action)
 
 
 def test_unknown_connector_is_fatal(monkeypatch, mod):
@@ -110,8 +145,7 @@ def test_unknown_connector_is_fatal(monkeypatch, mod):
 
 
 def test_missing_token_is_fatal(monkeypatch, mod):
-    monkeypatch.delenv("PLOW_CHAT_TOKEN", raising=False)
-    monkeypatch.delenv("PLOW_CONNECTOR_TOKEN", raising=False)
+    _clear_env(monkeypatch)
     with pytest.raises(SystemExit):
         mod.call("gmail", "status")
 

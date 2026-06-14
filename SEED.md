@@ -51,7 +51,7 @@ The named entities that exist on the Hermes side. For Plow Chat entities (chats,
 
 - An OPTIONAL Hermes skill named `plow-connectors` that lets the agent use the owner's Plow-connected Google (Gmail + Google Calendar) and Slack accounts. A scaffold MAY install only the `plow_chat` gateway and no connectors.
 - It is a single generic wrapper (`plow_connector.py`, Python stdlib only) over the Plow connector REST API: `GET /v1/connectors/<connector>/status` and `POST /v1/connectors/<connector>/<action>` with a JSON body, for `<connector>` in {`gmail`, `slack`}. Google Calendar actions (`calendar.events.*`, `calendar.list`, `calendar.freebusy`) live under the `gmail` connector.
-- It authenticates with the same user Bearer token the gateway already holds: it reads `PLOW_CONNECTOR_TOKEN` else `PLOW_CHAT_TOKEN`, and `PLOW_CONNECTOR_BASE_URL` else `PLOW_CHAT_BASE_URL` (default `https://api.plow.co`). It MUST NOT define new credentials.
+- It authenticates with the same user Bearer token the gateway already holds: it reads `PLOW_CONNECTOR_TOKEN` else `PLOW_CHAT_TOKEN`, against `PLOW_CHAT_BASE_URL` (default `https://api.plow.co`). It MUST NOT define new credentials.
 - `ref/scripts/install_connectors.sh` is the curl/shell installer for the skill, targeting a seed-hermes scaffold with `--scaffold <dir>` (default `./hermes-agent`) or `--data-dir <dir>`.
 
 ## Actions
@@ -107,8 +107,8 @@ The verbs performed by the Hermes-side objects. For Plow Chat actions (chat is c
 ### plow-connectors is installed and used
 
 - A host agent MAY run `ref/scripts/install_connectors.sh --scaffold <seed-hermes-scaffold>` to copy the skill file set into `data/skills/plow-connectors/`. Like the direct-mount installer, it MUST NOT call `hermes`, `git`, or a Python installer, and MUST NOT start the container.
-- When the connectors are linked to a different Plow account than the chat line, the operator MAY set `PLOW_CONNECTOR_TOKEN` (and optionally `PLOW_CONNECTOR_BASE_URL`) in the profile `.env`; these override `PLOW_CHAT_*` for connector calls only, leaving messaging on the chat account. The connector token is a user credential: mode `600`, never committed or logged.
-- The helper MUST issue `status` as a GET and every other action as a POST whose JSON body is the request. A non-2xx response MUST be fatal (non-zero exit, error body to stderr); the helper MUST NOT swallow it.
+- When the connectors are linked to a different Plow account than the chat line, the operator MAY set `PLOW_CONNECTOR_TOKEN` in the resolved profile `.env` (`data/.env`, or `data/profiles/<name>/.env`); it overrides `PLOW_CHAT_TOKEN` for connector calls only, leaving messaging on the chat account. The connector token is a user credential: mode `600`, never committed or logged.
+- The helper MUST issue `status` as a GET and every other action as a POST whose JSON body is the request. It MUST reject an `action` that is not a single connector action token (no `/`, `?`, or `..`), so a prompted agent cannot reach arbitrary bearer-authenticated Plow API paths. A non-2xx response MUST be fatal (non-zero exit, error body to stderr); the helper MUST NOT swallow it.
 - A connector whose `status` reports `connected:false` is not linked to that account; linking is a one-time OAuth consent in Plow and is out of scope for this seed.
 
 ## Verify

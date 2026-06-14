@@ -191,10 +191,11 @@ python3 /opt/data/skills/plow-connectors/plow_connector.py slack channels.list '
 ```
 
 If Google/Slack are connected to a **different** Plow account than the one that
-owns the chat line, point the connectors at it with `PLOW_CONNECTOR_TOKEN` (and
-optionally `PLOW_CONNECTOR_BASE_URL`) in `data/.env`; these override the
-`PLOW_CHAT_*` values for connector calls only, leaving messaging on the chat
-account. A connector whose `status` reports `connected:false` simply is not
+owns the chat line, point the connectors at it with `PLOW_CONNECTOR_TOKEN` in
+the resolved profile `.env` (`data/.env` for the default profile,
+`data/profiles/<name>/.env` for a named profile); it overrides `PLOW_CHAT_TOKEN`
+for connector calls only, leaving messaging on the chat account. A connector
+whose `status` reports `connected:false` simply is not
 linked to that account yet (linking is a one-time OAuth consent in Plow, out of
 scope for this seed).
 
