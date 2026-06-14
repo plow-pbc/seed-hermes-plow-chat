@@ -223,5 +223,27 @@ copy_or_fetch "ref/hermes-plugin/plow_chat/adapter.py"
 mkdir -p "${DATA_DIR%/}/workspace"
 enable_plugin_in_config
 
+# Per-profile plugin visibility.
+# Hermes (as of 0.14.0) discovers plugins from each profile's own plugins/ dir.
+# The scaffold-root data/plugins/ install only registers the plugin in the
+# DEFAULT profile context. For multi-profile installs (e.g. one owner profile +
+# one team-listener profile, both needing plow_chat), symlink the plugin dir
+# into each existing profile so `hermes -p <profile> plugins list` finds it.
+PROFILES_DIR="${DATA_DIR%/}/profiles"
+if [[ -d "$PROFILES_DIR" ]]; then
+  for prof_dir in "$PROFILES_DIR"/*/; do
+    [[ -d "$prof_dir" ]] || continue
+    prof_name=$(basename "${prof_dir%/}")
+    prof_plugins="${prof_dir}plugins"
+    mkdir -p "$prof_plugins"
+    target="${prof_plugins}/${PLUGIN_NAME}"
+    if [[ ! -e "$target" ]]; then
+      # Relative path so the symlink survives bind-mount path changes.
+      ln -sfn "../../../plugins/${PLUGIN_NAME}" "$target"
+      echo "  + symlinked ${PLUGIN_NAME} into profile '${prof_name}' plugins/"
+    fi
+  done
+fi
+
 echo "Installed ${PLUGIN_NAME} into ${PLUGIN_DIR}"
 echo "Enabled ${PLUGIN_NAME} in ${CONFIG_FILE}"

@@ -62,19 +62,81 @@ terminal:
 
 Use the curl-only host helper to start Plow activation with `provision_chat=true`,
 capture the returned session token and chat uid after verification, and write
-`PLOW_CHAT_*` to the scaffold's `data/.env` before first container boot:
+`PLOW_CHAT_*` to the target profile's `.env` before first container boot:
 
 ```bash
-ref/scripts/create_plow_chat_curl.sh \
-  --scaffold ./hermes-agent
+# Default profile (writes hermes-agent/data/.env):
+ref/scripts/create_plow_chat_curl.sh --scaffold ./hermes-agent
 ```
+
+### Per-profile activation
+
+A multi-profile install (e.g. an owner profile `daniel` plus a team-listener
+profile `daniel-team`) keeps each profile's credentials in its own env file
+under `data/profiles/<name>/.env`. Pass `--profile <name>` and the helper
+resolves the target automatically:
+
+```bash
+ref/scripts/create_plow_chat_curl.sh --scaffold ./hermes-agent --profile daniel
+ref/scripts/create_plow_chat_curl.sh --scaffold ./hermes-agent --profile daniel-team
+```
+
+`--profile <name>` is equivalent to `--data-dir ./hermes-agent/data/profiles/<name>`;
+use `--data-dir` directly when the profile lives outside the scaffold's
+`data/profiles/` tree. Run the helper once per profile before first boot.
 
 The script asks Plow to assign an available line and prints the instruction the
 user needs: `Text Plow Activate: ABCDE from iMessage to +1...`. It does not
-print the session token. It also writes a redacted `data/.activation.json` audit
-file with the activation secret removed and only the token last four retained.
-Start Hermes with `docker compose up` after the script writes `.env`, so the
-container boots once with the Plow Chat platform enabled.
+print the session token. It also writes a redacted `.activation.json` audit
+file (in the same profile dir) with the activation secret removed and only the
+token last four retained. Start Hermes with `docker compose up` after the
+script writes `.env`, so the container boots once with the Plow Chat platform
+enabled.
+
+### Confirming activation succeeded
+
+On success the helper prints a verification line naming the profile and the
+exact env file it wrote, so you can confirm Phase 4 worked without opening the
+file by hand:
+
+```text
+Verified: chat is active.
+Chat uid: cht_...
+Profile daniel activated. Wrote PLOW_CHAT_CHAT_UID + PLOW_CHAT_TOKEN to ./hermes-agent/data/profiles/daniel/.env.
+Wrote redacted activation audit to ./hermes-agent/data/profiles/daniel/.activation.json
+```
+
+The resulting profile `.env` contains these values (mode `600`):
+
+```bash
+PLOW_CHAT_BASE_URL=https://api.plow.co
+PLOW_CHAT_CHAT_UID=cht_<opaque-chat-id>      # the provisioned Plow chat uid
+PLOW_CHAT_TOKEN=<opaque-bearer-token>        # user Bearer credential — never commit/log
+PLOW_CHAT_HOME_CHANNEL=cht_<opaque-chat-id>  # same value as PLOW_CHAT_CHAT_UID
+```
+
+### If the activation code expires
+
+The displayed code is single-use and time-limited. If it expires before the
+text arrives, Plow's redeem endpoint returns HTTP 410; the helper detects this,
+prints `Activation code expired.` plus the exact command to re-run for a fresh
+code, and exits non-zero (75) instead of surfacing a raw `curl: (22)` error.
+Just run the same command again.
+
+### Non-interactive test mode (testing/CI only)
+
+Phase 4 normally requires a human texting the activation code from the target
+iPhone, which cannot complete in a headless DinD/CI environment. For test
+validation only, `--test-mode` skips the phone-bind dance and writes
+operator-supplied credentials straight to the profile `.env`:
+
+```bash
+ref/scripts/create_plow_chat_curl.sh --scaffold ./hermes-agent --profile daniel \
+  --test-mode --test-chat-uid cht_known --test-token tok_known
+```
+
+This is **not** a real activation — it never contacts Plow and the audit file
+records `"status": "test-mode"`. Never use it for a real operator install.
 
 The host poll uses:
 
@@ -94,10 +156,10 @@ the normal Plow message endpoint. Set
 ## Runtime behavior
 
 - `PLOW_CHAT_CHAT_UID` is the single Plow chat handled by this plugin instance.
-- `PLOW_CHAT_TOKEN` stays in the scaffold's `data/.env`; do not commit it
-  or log it.
+- `PLOW_CHAT_TOKEN` stays in the profile's `.env` (scaffold `data/.env`, or
+  `data/profiles/<name>/.env` for a named profile); do not commit it or log it.
 - The activation Bearer token is a user credential, not just a chat secret.
-  Keep `data/.env` and `data/.activation.json` mode `600`.
+  Keep the profile `.env` and `.activation.json` mode `600`.
 - The adapter sends the welcome on `chat_active` or first connect to an already-active chat.
 - Inbound WebSocket frames with `direction=outbound` are ignored so Hermes does
   not answer itself.
