@@ -171,35 +171,14 @@ class FakeResponse:
         return self.payload
 
 
-class RaisingContext:
-    async def __aenter__(self):
-        raise RuntimeError("temporary status failure")
-
-    async def __aexit__(self, *args):
-        return False
-
-
 class RecordingSession:
-    def __init__(self, payload=None, *, get_payload=None, get_sequence=None):
+    def __init__(self, payload=None):
         self.payload = payload or {}
-        self.get_payload = get_payload or {}
-        self.get_sequence = list(get_sequence or [])
         self.posts = []
-        self.gets = []
 
     def post(self, url, **kwargs):
         self.posts.append((url, kwargs))
         return FakeResponse(self.payload)
-
-    def get(self, url, **kwargs):
-        self.gets.append((url, kwargs))
-        if self.get_sequence:
-            item = self.get_sequence.pop(0)
-            if isinstance(item, BaseException):
-                return RaisingContext()
-            payload, status = item
-            return FakeResponse(payload, status=status)
-        return FakeResponse(self.get_payload)
 
     async def close(self):
         return None
@@ -245,36 +224,28 @@ def test_ws_ticket_is_scoped_to_chat_and_uses_bearer(monkeypatch):
     ]
 
 
-ACTIVE = {"uid": "cht_test", "status": "active"}
 SENT = [("cht_test", "ready!")]
-STATUS_GET = ("https://api.plow.co/v1/chats/cht_test", {"headers": {"Authorization": "Bearer token_test"}})
 
 
-# Each row drives connected/chat_active frames and asserts cumulative sends after
-# every frame, so a send on a failed status check (which the latch would mask in a
-# final-only assertion) is caught. The welcome must go out exactly once.
 @pytest.mark.parametrize(
-    "session_factory, send_success, steps, get_count",
+    "send_success, frames, expected_sent",
     [
-        (lambda: RecordingSession(get_payload=ACTIVE), True,
-         [("connected", SENT), ("connected", SENT), ("chat_active", SENT)], 1),
-        (lambda: RecordingSession(get_sequence=[RuntimeError("transient"), (ACTIVE, 200)]), True,
-         [("connected", []), ("connected", SENT), ("connected", SENT)], 2),
-        (lambda: RecordingSession(get_payload=ACTIVE), False,
-         [("connected", SENT), ("connected", SENT)], 1),
+        # chat_active sends the welcome once; a duplicate chat_active does not re-send.
+        (True, ["chat_active", "chat_active"], SENT),
+        # An ambiguous send (committed server-side, reported as a client failure)
+        # latches on attempt, so a later chat_active does not re-send.
+        (False, ["chat_active", "chat_active"], SENT),
+        # connected frames never trigger the welcome (no first-connect path).
+        (True, ["connected", "connected"], []),
     ],
-    ids=["active-connect", "status-failure-retry", "ambiguous-send"],
+    ids=["chat-active-once", "ambiguous-send-latched", "connected-no-welcome"],
 )
-def test_connected_active_chat_welcome_latch(monkeypatch, session_factory, send_success, steps, get_count):
+def test_activation_welcome_latch(monkeypatch, send_success, frames, expected_sent):
     monkeypatch.setenv("PLOW_CHAT_WELCOME_MESSAGE", "ready!")
     adapter = RecordingAdapter(monkeypatch)
     adapter.send_success = send_success
-    session = session_factory()
-    adapter._http_session = session
 
-    for frame, expected_sent in steps:
+    for frame in frames:
         asyncio.run(adapter._handle_ws_frame({"type": frame}))
-        assert adapter.sent == expected_sent
 
-    assert len(session.gets) == get_count
-    assert session.gets[0] == STATUS_GET
+    assert adapter.sent == expected_sent

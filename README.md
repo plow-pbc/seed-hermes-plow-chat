@@ -147,9 +147,8 @@ printf '{"activation_secret":"%s"}' "$ACTIVATION_SECRET" | curl -sSL \
   "https://api.plow.co/v1/auth/activate/redeem"
 ```
 
-When Plow emits `chat_active`, or when the adapter first connects to an
-already-active chat, it sends exactly one welcome message from Hermes through
-the normal Plow message endpoint. Set
+If the adapter is connected when Plow emits `chat_active`, it sends exactly one
+welcome message from Hermes through the normal Plow message endpoint. Set
 `PLOW_CHAT_WELCOME_MESSAGE` to customize it or
 `PLOW_CHAT_AUTO_WELCOME=false` to disable it.
 
@@ -160,7 +159,7 @@ the normal Plow message endpoint. Set
   `data/profiles/<name>/.env` for a named profile); do not commit it or log it.
 - The activation Bearer token is a user credential, not just a chat secret.
   Keep the profile `.env` and `.activation.json` mode `600`.
-- The adapter sends the welcome on `chat_active` or first connect to an already-active chat.
+- The adapter sends the welcome on the first `chat_active` frame it sees while connected.
 - Inbound WebSocket frames with `direction=outbound` are ignored so Hermes does
   not answer itself.
 - The adapter best-effort approves verified Plow member ids in Hermes'

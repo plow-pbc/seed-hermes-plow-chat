@@ -29,12 +29,12 @@ optional_env:
     secret: false
     password: false
   - name: PLOW_CHAT_WELCOME_MESSAGE
-    description: "Optional setup-success message sent once on chat_active or first connect to an active chat"
+    description: "Optional setup-success message sent once when Plow emits chat_active"
     prompt: "Welcome message"
     secret: false
     password: false
   - name: PLOW_CHAT_AUTO_WELCOME
-    description: "Set false to disable the automatic welcome on chat_active or first connect to an active chat"
+    description: "Set false to disable the automatic chat_active welcome message"
     prompt: "Auto welcome enabled"
     secret: false
     password: false
