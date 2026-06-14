@@ -4,6 +4,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 
 class Platform(str):
     pass
@@ -243,58 +245,36 @@ def test_ws_ticket_is_scoped_to_chat_and_uses_bearer(monkeypatch):
     ]
 
 
-def test_connected_active_chat_sends_welcome_once(monkeypatch):
+ACTIVE = {"uid": "cht_test", "status": "active"}
+SENT = [("cht_test", "ready!")]
+STATUS_GET = ("https://api.plow.co/v1/chats/cht_test", {"headers": {"Authorization": "Bearer token_test"}})
+
+
+# Each row drives connected/chat_active frames and asserts cumulative sends after
+# every frame, so a send on a failed status check (which the latch would mask in a
+# final-only assertion) is caught. The welcome must go out exactly once.
+@pytest.mark.parametrize(
+    "session_factory, send_success, steps, get_count",
+    [
+        (lambda: RecordingSession(get_payload=ACTIVE), True,
+         [("connected", SENT), ("connected", SENT), ("chat_active", SENT)], 1),
+        (lambda: RecordingSession(get_sequence=[RuntimeError("transient"), (ACTIVE, 200)]), True,
+         [("connected", []), ("connected", SENT), ("connected", SENT)], 2),
+        (lambda: RecordingSession(get_payload=ACTIVE), False,
+         [("connected", SENT), ("connected", SENT)], 1),
+    ],
+    ids=["active-connect", "status-failure-retry", "ambiguous-send"],
+)
+def test_connected_active_chat_welcome_latch(monkeypatch, session_factory, send_success, steps, get_count):
     monkeypatch.setenv("PLOW_CHAT_WELCOME_MESSAGE", "ready!")
     adapter = RecordingAdapter(monkeypatch)
-    session = RecordingSession(get_payload={"uid": "cht_test", "status": "active"})
+    adapter.send_success = send_success
+    session = session_factory()
     adapter._http_session = session
 
-    asyncio.run(adapter._handle_ws_frame({"type": "connected"}))
-    asyncio.run(adapter._handle_ws_frame({"type": "connected"}))
-    asyncio.run(adapter._handle_ws_frame({"type": "chat_active"}))
+    for frame, expected_sent in steps:
+        asyncio.run(adapter._handle_ws_frame({"type": frame}))
+        assert adapter.sent == expected_sent
 
-    assert adapter.sent == [("cht_test", "ready!")]
-    assert session.gets == [
-        (
-            "https://api.plow.co/v1/chats/cht_test",
-            {"headers": {"Authorization": "Bearer token_test"}},
-        )
-    ]
-
-
-def test_active_chat_welcome_retries_after_status_failure(monkeypatch):
-    monkeypatch.setenv("PLOW_CHAT_WELCOME_MESSAGE", "ready!")
-    adapter = RecordingAdapter(monkeypatch)
-    session = RecordingSession(
-        get_sequence=[
-            RuntimeError("temporary status failure"),
-            ({"uid": "cht_test", "status": "active"}, 200),
-        ]
-    )
-    adapter._http_session = session
-
-    asyncio.run(adapter._handle_ws_frame({"type": "connected"}))
-    assert adapter.sent == []
-
-    asyncio.run(adapter._handle_ws_frame({"type": "connected"}))
-    assert adapter.sent == [("cht_test", "ready!")]
-
-    asyncio.run(adapter._handle_ws_frame({"type": "connected"}))
-    assert adapter.sent == [("cht_test", "ready!")]
-    assert len(session.gets) == 2
-
-
-def test_active_chat_welcome_not_resent_after_ambiguous_send(monkeypatch):
-    """A welcome POST can commit server-side yet report client failure; it must
-    not be replayed by a later connected frame."""
-    monkeypatch.setenv("PLOW_CHAT_WELCOME_MESSAGE", "ready!")
-    adapter = RecordingAdapter(monkeypatch)
-    adapter.send_success = False
-    session = RecordingSession(get_payload={"uid": "cht_test", "status": "active"})
-    adapter._http_session = session
-
-    asyncio.run(adapter._handle_ws_frame({"type": "connected"}))
-    asyncio.run(adapter._handle_ws_frame({"type": "connected"}))
-
-    assert adapter.sent == [("cht_test", "ready!")]
-    assert len(session.gets) == 1
+    assert len(session.gets) == get_count
+    assert session.gets[0] == STATUS_GET
