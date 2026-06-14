@@ -183,11 +183,17 @@ class RecordingSession:
         self.gets.append((url, kwargs))
         return FakeResponse(self.get_payload)
 
+    async def close(self):
+        # send() now uses a per-call aiohttp.ClientSession() and closes it.
+        pass
+
 
 def test_send_uses_bearer_token(monkeypatch):
     adapter = RecordingAdapter(monkeypatch)
     session = RecordingSession({"uid": "msg_1", "status": "sent"})
-    adapter._http_session = session
+    # send() opens a fresh per-call aiohttp.ClientSession(); make the stub hand
+    # back our recording session so we can assert on the request it issues.
+    monkeypatch.setattr(sys.modules["aiohttp"], "ClientSession", lambda *a, **k: session, raising=False)
 
     result = asyncio.run(adapter_mod.PlowChatAdapter.send(adapter, "cht_test", "hello"))
 
