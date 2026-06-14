@@ -141,7 +141,7 @@ records `"status": "test-mode"`. Never use it for a real operator install.
 The host poll uses:
 
 ```bash
-printf '{"activation_secret":"%s"}' "$ACTIVATION_SECRET" | curl -fsS \
+printf '{"activation_secret":"%s"}' "$ACTIVATION_SECRET" | curl -sSL \
   -H 'Content-Type: application/json' \
   -d @- \
   "https://api.plow.co/v1/auth/activate/redeem"
