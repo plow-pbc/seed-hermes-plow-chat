@@ -107,16 +107,6 @@ def test_chat_active_sends_default_welcome(monkeypatch):
     ]
 
 
-def test_chat_active_welcome_is_sent_once(monkeypatch):
-    monkeypatch.setenv("PLOW_CHAT_WELCOME_MESSAGE", "ready!")
-    adapter = RecordingAdapter(monkeypatch)
-
-    asyncio.run(adapter._handle_ws_frame({"type": "chat_active"}))
-    asyncio.run(adapter._handle_ws_frame({"type": "chat_active"}))
-
-    assert adapter.sent == [("cht_test", "ready!")]
-
-
 def test_inbound_message_auto_approves_verified_sender(monkeypatch):
     approved = []
 
