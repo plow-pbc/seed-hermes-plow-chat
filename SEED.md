@@ -47,6 +47,13 @@ The named entities that exist on the Hermes side. For Plow Chat entities (chats,
 - `ref/scripts/create_plow_chat_curl.sh` is a curl/shell helper that targets the same scaffold with `--scaffold <dir>`, `--profile <name>`, or `--data-dir <dir>`, starts Plow activation with `provision_chat=true`, prints the one-time activation message, writes `PLOW_CHAT_*` to the target profile's `.env`, and polls activation redeem until verified or timeout.
 - The helper MUST resolve its target data dir as follows, highest precedence first: an explicit `--data-dir <dir>`; else `--profile <name>` (or `PLOW_CHAT_PROFILE`) resolving to `<scaffold>/data/profiles/<name>`; else the scaffold's `data/`. This MUST match the per-profile `.env` files that downstream install verification reads.
 
+### plow-connectors Hermes skill
+
+- An OPTIONAL Hermes skill named `plow-connectors` that lets the agent use the owner's Plow-connected Google (Gmail + Google Calendar) and Slack accounts. A scaffold MAY install only the `plow_chat` gateway and no connectors.
+- It is a single generic wrapper (`plow_connector.py`, Python stdlib only) over the Plow connector REST API: `GET /v1/connectors/<connector>/status` and `POST /v1/connectors/<connector>/<action>` with a JSON body, for `<connector>` in {`gmail`, `slack`}. Google Calendar actions (`calendar.events.*`, `calendar.list`, `calendar.freebusy`) live under the `gmail` connector.
+- It authenticates with the same user Bearer token the gateway already holds: it reads `PLOW_CONNECTOR_TOKEN` else `PLOW_CHAT_TOKEN`, and `PLOW_CONNECTOR_BASE_URL` else `PLOW_CHAT_BASE_URL` (default `https://api.plow.co`). It MUST NOT define new credentials.
+- `ref/scripts/install_connectors.sh` is the curl/shell installer for the skill, targeting a seed-hermes scaffold with `--scaffold <dir>` (default `./hermes-agent`) or `--data-dir <dir>`.
+
 ## Actions
 
 The verbs performed by the Hermes-side objects. For Plow Chat actions (chat is created, chat is verified, message is sent, WebSocket subscription is opened, message is received), see the [Plow Chat Actions](https://github.com/plow-pbc/seed-plow-chat/blob/main/SEED.md#actions).
@@ -97,6 +104,13 @@ The verbs performed by the Hermes-side objects. For Plow Chat actions (chat is c
 - The adapter SHOULD surface `chat_activation_failed` as a fatal setup error, because recovery is delete and recreate.
 - The adapter SHOULD mark the platform connected only after the WebSocket's initial `connected` frame.
 
+### plow-connectors is installed and used
+
+- A host agent MAY run `ref/scripts/install_connectors.sh --scaffold <seed-hermes-scaffold>` to copy the skill file set into `data/skills/plow-connectors/`. Like the direct-mount installer, it MUST NOT call `hermes`, `git`, or a Python installer, and MUST NOT start the container.
+- When the connectors are linked to a different Plow account than the chat line, the operator MAY set `PLOW_CONNECTOR_TOKEN` (and optionally `PLOW_CONNECTOR_BASE_URL`) in the profile `.env`; these override `PLOW_CHAT_*` for connector calls only, leaving messaging on the chat account. The connector token is a user credential: mode `600`, never committed or logged.
+- The helper MUST issue `status` as a GET and every other action as a POST whose JSON body is the request. A non-2xx response MUST be fatal (non-zero exit, error body to stderr); the helper MUST NOT swallow it.
+- A connector whose `status` reports `connected:false` is not linked to that account; linking is a one-time OAuth consent in Plow and is out of scope for this seed.
+
 ## Verify
 
 1. **Direct file-set check.** Run `PLOW_CHAT_PLUGIN_LOCAL_DIR=. ref/scripts/install_direct_mount.sh --scaffold "$(mktemp -d)/hermes-agent"`. Does it create `data/plugins/plow-chat-platform/plugin.yaml`, `data/plugins/plow-chat-platform/__init__.py`, and `data/plugins/plow-chat-platform/ref/hermes-plugin/plow_chat/adapter.py`? Expected: yes.
@@ -112,6 +126,8 @@ The verbs performed by the Hermes-side objects. For Plow Chat actions (chat is c
 6. **Container plugin-load check.** Prepare `./data` with the direct file set, `plugins.enabled: [plow-chat-platform]`, and dummy or real `PLOW_CHAT_*`; run `docker compose up`. Do logs show platform `plow_chat` registered and no `ImportError` from the plugin root? Expected: yes.
 
 7. **Optional live chat check.** Run `ref/scripts/create_plow_chat_curl.sh --scaffold ./hermes-agent`, text the printed activation message from iMessage to the printed phone number, and let the script poll before starting Hermes. Does it report `verified`, write `PLOW_CHAT_TOKEN`, `PLOW_CHAT_CHAT_UID`, and a redacted `data/.activation.json`, and does a normal iMessage reply reach Hermes after first container start? Expected: yes.
+
+8. **Connector skill check.** Run `python3 -m py_compile ref/hermes-skill/plow-connectors/plow_connector.py` and `ref/scripts/install_connectors.sh --scaffold "$(mktemp -d)/hermes-agent"`. Does the helper compile and the skill install under `data/skills/plow-connectors/` (with `SKILL.md` and an executable `plow_connector.py`)? Expected: yes.
 
 ## Open
 

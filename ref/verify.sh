@@ -58,7 +58,7 @@ if awk '/disabled:/{in_disabled=1; next} in_disabled && /^  [^ ]/{in_disabled=0}
 fi
 
 # 3. Host shell helpers are syntax-valid and contain no Python/git/Hermes CLI dependency.
-bash -n ref/scripts/install_direct_mount.sh ref/scripts/create_plow_chat_curl.sh
+bash -n ref/scripts/install_direct_mount.sh ref/scripts/create_plow_chat_curl.sh ref/scripts/install_connectors.sh
 if [[ -e after-install.md || -e ref/scripts/bootstrap_fresh_hermes.sh || -e ref/scripts/configure_hermes_env.py ]]; then
   echo 'old host installer artifact still exists' >&2
   exit 1
@@ -307,6 +307,20 @@ if 'register' not in text or 'adapter.py' not in text:
 if 'raise ImportError' not in text:
     raise SystemExit('root __init__.py does not fail closed when adapter.py is missing')
 PY
+
+# 5b. Connector skill compiles and installs into a scaffold's data/skills/.
+python3 -m py_compile ref/hermes-skill/plow-connectors/plow_connector.py
+conn_tmp="$(mktemp -d)"
+trap 'rm -rf "$tmpdir" "$conn_tmp"' EXIT
+ref/scripts/install_connectors.sh --scaffold "$conn_tmp/hermes-agent" >/dev/null
+for path in \
+  "$conn_tmp/hermes-agent/data/skills/plow-connectors/SKILL.md" \
+  "$conn_tmp/hermes-agent/data/skills/plow-connectors/plow_connector.py"
+do
+  [[ -f "$path" ]] || { echo "connector skill not installed: $path" >&2; exit 1; }
+done
+[[ -x "$conn_tmp/hermes-agent/data/skills/plow-connectors/plow_connector.py" ]] || {
+  echo 'installed plow_connector.py is not executable' >&2; exit 1; }
 
 # 6. Secret hygiene check.
 python3 - <<'PY'

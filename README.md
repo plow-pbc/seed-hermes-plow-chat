@@ -167,6 +167,37 @@ welcome message from Hermes through the normal Plow message endpoint. Set
 - Rich Markdown is flattened to plain text because the backing channel is
   iMessage/SMS-style.
 
+## Plow connectors (Gmail · Google Calendar · Slack)
+
+Beyond messaging, this seed can give Hermes the owner's Plow-connected Google
+(Gmail + Google Calendar) and Slack accounts. The `plow-connectors` skill wraps
+the Plow connector REST API (`POST /v1/connectors/<connector>/<action>`, plus
+`GET .../status`) and reuses the gateway's existing `PLOW_CHAT_TOKEN` /
+`PLOW_CHAT_BASE_URL`, so there are no new credentials to manage.
+
+Install it into the scaffold (this does not start the container):
+
+```bash
+ref/scripts/install_connectors.sh --scaffold ./hermes-agent
+```
+
+It copies the skill to `data/skills/plow-connectors/`. After the next
+`docker compose up`, the agent uses it via its shell, e.g.:
+
+```bash
+python3 /opt/data/skills/plow-connectors/plow_connector.py gmail status
+python3 /opt/data/skills/plow-connectors/plow_connector.py gmail messages.list '{"query":"is:unread","max_results":5}'
+python3 /opt/data/skills/plow-connectors/plow_connector.py slack channels.list '{"account":"T0..."}'
+```
+
+If Google/Slack are connected to a **different** Plow account than the one that
+owns the chat line, point the connectors at it with `PLOW_CONNECTOR_TOKEN` (and
+optionally `PLOW_CONNECTOR_BASE_URL`) in `data/.env`; these override the
+`PLOW_CHAT_*` values for connector calls only, leaving messaging on the chat
+account. A connector whose `status` reports `connected:false` simply is not
+linked to that account yet (linking is a one-time OAuth consent in Plow, out of
+scope for this seed).
+
 ## License
 
 MIT.
