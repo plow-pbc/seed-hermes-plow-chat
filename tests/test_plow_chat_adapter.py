@@ -81,10 +81,11 @@ class RecordingAdapter(adapter_mod.PlowChatAdapter):
         super().__init__(DummyConfig())
         self.sent = []
         self.handled = []
+        self.send_success = True
 
     async def send(self, chat_id, content, reply_to=None, metadata=None):
         self.sent.append((chat_id, content))
-        return SendResult(success=True, message_id="msg_welcome")
+        return SendResult(success=self.send_success, message_id="msg_welcome")
 
     async def handle_message(self, event):
         self.handled.append(event)
@@ -177,10 +178,9 @@ class RaisingContext:
 
 
 class RecordingSession:
-    def __init__(self, payload=None, *, get_payload=None, get_status=200, get_sequence=None):
+    def __init__(self, payload=None, *, get_payload=None, get_sequence=None):
         self.payload = payload or {}
         self.get_payload = get_payload or {}
-        self.get_status = get_status
         self.get_sequence = list(get_sequence or [])
         self.posts = []
         self.gets = []
@@ -197,13 +197,18 @@ class RecordingSession:
                 return RaisingContext()
             payload, status = item
             return FakeResponse(payload, status=status)
-        return FakeResponse(self.get_payload, status=self.get_status)
+        return FakeResponse(self.get_payload)
+
+    async def close(self):
+        return None
 
 
 def test_send_uses_bearer_token(monkeypatch):
     adapter = RecordingAdapter(monkeypatch)
     session = RecordingSession({"uid": "msg_1", "status": "sent"})
-    adapter._http_session = session
+    # send() opens a fresh per-call aiohttp.ClientSession (see adapter.send),
+    # so stub the constructor to hand back the recording session.
+    monkeypatch.setattr(sys.modules["aiohttp"], "ClientSession", lambda *a, **k: session, raising=False)
 
     result = asyncio.run(adapter_mod.PlowChatAdapter.send(adapter, "cht_test", "hello"))
 
@@ -264,7 +269,6 @@ def test_active_chat_welcome_retries_after_status_failure(monkeypatch):
         get_sequence=[
             RuntimeError("temporary status failure"),
             ({"uid": "cht_test", "status": "active"}, 200),
-            ({"uid": "cht_test", "status": "active"}, 200),
         ]
     )
     adapter._http_session = session
@@ -278,3 +282,19 @@ def test_active_chat_welcome_retries_after_status_failure(monkeypatch):
     asyncio.run(adapter._handle_ws_frame({"type": "connected"}))
     assert adapter.sent == [("cht_test", "ready!")]
     assert len(session.gets) == 2
+
+
+def test_active_chat_welcome_not_resent_after_ambiguous_send(monkeypatch):
+    """A welcome POST can commit server-side yet report client failure; it must
+    not be replayed by a later connected frame."""
+    monkeypatch.setenv("PLOW_CHAT_WELCOME_MESSAGE", "ready!")
+    adapter = RecordingAdapter(monkeypatch)
+    adapter.send_success = False
+    session = RecordingSession(get_payload={"uid": "cht_test", "status": "active"})
+    adapter._http_session = session
+
+    asyncio.run(adapter._handle_ws_frame({"type": "connected"}))
+    asyncio.run(adapter._handle_ws_frame({"type": "connected"}))
+
+    assert adapter.sent == [("cht_test", "ready!")]
+    assert len(session.gets) == 1

@@ -289,10 +289,13 @@ class PlowChatAdapter(BasePlatformAdapter):
         message = _welcome_message_from_env()
         if not message:
             return
+        # Latch before sending: a welcome POST can commit server-side even when
+        # the client observes a failure, so we attempt it at most once to keep
+        # the exactly-once contract. Status-lookup failures still retry because
+        # they return before reaching this point.
+        self._welcome_sent = True
         result = await self.send(self.chat_uid, message)
-        if result.success:
-            self._welcome_sent = True
-        else:
+        if not result.success:
             logger.warning("[plow_chat] activation welcome send failed: %s", result.error)
 
     async def _send_welcome_if_chat_already_active(self) -> None:
