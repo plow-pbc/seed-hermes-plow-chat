@@ -391,6 +391,13 @@ while [[ "$(date +%s)" -lt "$deadline" ]]; do
       echo "Activation verified, but redeem did not include both token and chat uid." >&2
       exit 1
     fi
+    # Fail fast on a token carrying quote/backslash/CR/LF: a real Plow bearer
+    # token never does, and such chars would break out of get_with_token's
+    # curl --config "header = \"...\"" line (config-injection).
+    if [[ "$TOKEN" == *[$'\r\n"\\']* ]]; then
+      echo "Redeem token contains unexpected control or quote characters; refusing to proceed." >&2
+      exit 1
+    fi
     OWNER_IDENTITY_JSON="$(get_with_token "${BASE_URL}/v1/auth/owner-identity")"
     CHANNELS_JSON="$(get_with_token "${BASE_URL}/v1/me/channels")"
     # Re-apply permissions right before writing: the container may have churned
